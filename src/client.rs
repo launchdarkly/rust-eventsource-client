@@ -50,39 +50,41 @@ impl std::ops::Index<&str> for Event {
 pub type EventStream = Box<Stream<Item = Event, Error = Error> + Send>;
 
 pub struct ClientBuilder {
-    //http: ra::Client,
-    request_builder: ra::RequestBuilder,
+    url: r::Url,
+    headers: r::header::HeaderMap,
 }
 
 impl ClientBuilder {
-    pub fn header(mut self, key: &str, value: &str) -> ClientBuilder {
-        self.request_builder = self.request_builder.header(key, value);
+    pub fn header(mut self, key: &'static str, value: &str) -> ClientBuilder {
+        self.headers.insert(key, value.parse().unwrap());
         self
     }
 
     pub fn build(self) -> Client {
         Client {
-            request_builder: self.request_builder,
+            url: self.url,
+            headers: self.headers,
         }
     }
 }
 
 pub struct Client {
-    request_builder: ra::RequestBuilder,
+    url: r::Url,
+    headers: r::header::HeaderMap,
 }
 
 impl Client {
     pub fn for_url<U: r::IntoUrl>(url: U) -> ClientBuilder {
-        let http = ra::Client::new();
-        let builder = http.get(url);
         ClientBuilder {
-            //http,
-            request_builder: builder,
+            url: url.into_url().unwrap(),
+            headers: r::header::HeaderMap::new(),
         }
     }
 
-    pub fn stream(self) -> EventStream {
-        let resp = self.request_builder.send();
+    pub fn stream(&mut self) -> EventStream {
+        let http = ra::Client::new();
+        let request = http.get(self.url.clone()).headers(self.headers.clone());
+        let resp = request.send();
 
         let fut_stream_chunks = resp
             .and_then(|resp| {
