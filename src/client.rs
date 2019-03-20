@@ -43,7 +43,7 @@ impl std::ops::Index<&str> for Event {
     type Output = [u8];
 
     fn index(&self, name: &str) -> &[u8] {
-        &self.fields[name.into()]
+        self.field(name)
     }
 }
 
@@ -104,9 +104,12 @@ impl Client {
                 .map(|c| decode_chunk(c).expect("bad decode"))
                 .filter_map(|opt| opt),
         )
+        //Box::new(Decoded::new(fut_stream_chunks.flatten_stream()))
     }
 }
 
+// Decode a chunk into an event, assuming that events are not split between
+// chunks (i.e. that each chunk contains either 0 or 1 event).
 fn decode_chunk(chunk: ra::Chunk) -> Result<Option<Event>, Error> {
     println!("decoder got a chunk: {:?}", chunk);
 
@@ -165,3 +168,62 @@ fn decode_chunk(chunk: ra::Chunk) -> Result<Option<Event>, Error> {
 
     Err("oops".to_string())
 }
+
+// TODO is all of the following unnecessary?
+/*
+use futures::stream::Fuse;
+use futures::{Async, Poll};
+
+#[must_use = "streams do nothing unless polled"]
+struct Decoded<S> {
+    chunk_stream: Fuse<S>,
+    event: Event,
+}
+
+impl<S: Stream> Decoded<S> {
+    fn new(s: S) -> Decoded<S> {
+        return Decoded {
+            chunk_stream: s.fuse(),
+            event: Event::new(),
+        };
+    }
+}
+
+impl<S> Stream for Decoded<S>
+where
+    S: Stream<Item = ra::Chunk>,
+    S::Error: std::fmt::Display,
+{
+    type Item = Event;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Event>, Error> {
+        let chunk = match self
+            .chunk_stream
+            .poll()
+            .map_err(|e| format!("stream error: {}", e).to_string())?
+        {
+            Async::Ready(Some(c)) => c,
+            Async::Ready(None) | Async::NotReady => {
+                if self.chunk_stream.is_done() {
+                    println!("decoder is done");
+                    return Ok(Async::Ready(None));
+                } else {
+                    println!("decoder is not ready");
+                    return Ok(Async::NotReady);
+                }
+            }
+        };
+
+        println!("decoder got a chunk: {:?}", chunk);
+
+        let lines = chunk.split(|b| &b'\n' == b);
+
+        for line in lines {
+            println!("splat: {:?}", from_utf8(line).unwrap());
+        }
+
+        Ok(Async::Ready(Some(self.event.clone())))
+    }
+}
+*/
