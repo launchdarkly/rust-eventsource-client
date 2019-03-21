@@ -15,7 +15,7 @@ use reqwest::r#async as ra;
 
 pub type Error = String; // TODO enum
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 // TODO can we make this require less copying?
 pub struct Event {
     pub event_type: String,
@@ -97,19 +97,20 @@ impl Client {
                 e
             });
 
-        Box::new(
-            fut_stream_chunks
-                .flatten_stream()
-                .map_err(|e| format!("error = {:?}", e).to_string())
-                .map(|c| decode_chunk(c).expect("bad decode"))
-                .filter_map(|opt| opt),
-        )
-        //Box::new(Decoded::new(fut_stream_chunks.flatten_stream()))
+        //Box::new(
+        //fut_stream_chunks
+        //.flatten_stream()
+        //.map_err(|e| format!("error = {:?}", e).to_string())
+        //.map(|c| decode_chunk(c).expect("bad decode"))
+        //.filter_map(|opt| opt),
+        //)
+        Box::new(Decoded::new(fut_stream_chunks.flatten_stream()))
     }
 }
 
 // Decode a chunk into an event, assuming that events are not split between
 // chunks (i.e. that each chunk contains either 0 or 1 event).
+// TODO that is FALSE
 fn decode_chunk(chunk: ra::Chunk) -> Result<Option<Event>, Error> {
     println!("decoder got a chunk: {:?}", chunk);
 
@@ -170,21 +171,22 @@ fn decode_chunk(chunk: ra::Chunk) -> Result<Option<Event>, Error> {
 }
 
 // TODO is all of the following unnecessary?
-/*
 use futures::stream::Fuse;
 use futures::{Async, Poll};
 
 #[must_use = "streams do nothing unless polled"]
 struct Decoded<S> {
     chunk_stream: Fuse<S>,
-    event: Event,
+    incomplete_line: Option<Vec<u8>>,
+    event: Option<Event>,
 }
 
 impl<S: Stream> Decoded<S> {
     fn new(s: S) -> Decoded<S> {
         return Decoded {
             chunk_stream: s.fuse(),
-            event: Event::new(),
+            incomplete_line: None,
+            event: None,
         };
     }
 }
@@ -217,13 +219,69 @@ where
 
         println!("decoder got a chunk: {:?}", chunk);
 
-        let lines = chunk.split(|b| &b'\n' == b);
-
-        for line in lines {
-            println!("splat: {:?}", from_utf8(line).unwrap());
+        if chunk[chunk.len() - 1] != b'\n' {
+            println!("Chunk does not end with newline!");
+            // TODO
         }
 
-        Ok(Async::Ready(Some(self.event.clone())))
+        let lines = chunk.split(|&b| b'\n' == b);
+
+        for line in lines {
+            println!("Line: {}", from_utf8(line).unwrap());
+
+            if line.is_empty() {
+                println!(
+                    "emptyline (event is {:?})",
+                    self.event.as_ref().map(|_| "<event>")
+                );
+                match &self.event {
+                    None => return Ok(Async::NotReady),
+                    Some(event) => {
+                        let event = event.clone();
+                        self.event = None;
+                        return Ok(Async::Ready(Some(event)));
+                    }
+                }
+            }
+
+            match line[0] {
+                b':' => {
+                    println!(
+                        "comment: {}",
+                        from_utf8(&line[1..]).unwrap_or("<bad utf-8>")
+                    );
+                    continue;
+                }
+                _ => match line.iter().position(|&b| b':' == b) {
+                    Some(colon_pos) => {
+                        let key = &line[0..colon_pos];
+                        let key = from_utf8(key).unwrap();
+                        let value = &line[colon_pos + 1..];
+                        let value = match value.iter().position(|&b| !b.is_ascii_whitespace()) {
+                            Some(start) => &value[start..],
+                            None => b"",
+                        };
+
+                        if self.event.is_none() {
+                            self.event = Some(Event::new());
+                        }
+                        match key {
+                            "event" => {
+                                self.event.as_mut().unwrap().event_type =
+                                    from_utf8(value).unwrap().to_string()
+                            }
+                            _ => self.event.as_mut().unwrap().set_field(key, value),
+                        };
+
+                        println!("key: {}, value: {}", key, from_utf8(value).unwrap());
+                    }
+                    None => {
+                        println!("some kind of weird line");
+                    }
+                },
+            }
+        }
+
+        Ok(Async::NotReady)
     }
 }
-*/
