@@ -129,45 +129,53 @@ fn decode_chunk(chunk: ra::Chunk) -> Result<Option<Event>, Error> {
             return Ok(event);
         }
 
-        match line[0] {
-            b':' => {
-                println!(
-                    "comment: {}",
-                    from_utf8(&line[1..]).unwrap_or("<bad utf-8>")
-                );
-                continue;
+        if let Some((key, value)) = parse_field(line) {
+            if event.is_none() {
+                event = Some(Event::new());
             }
-            _ => match line.iter().position(|&b| b':' == b) {
-                Some(colon_pos) => {
-                    let key = &line[0..colon_pos];
-                    let key = from_utf8(key).unwrap();
-                    let value = &line[colon_pos + 1..];
-                    let value = match value.iter().position(|&b| !b.is_ascii_whitespace()) {
-                        Some(start) => &value[start..],
-                        None => b"",
-                    };
 
-                    if event.is_none() {
-                        event = Some(Event::new());
-                    }
-                    match key {
-                        "event" => {
-                            event.as_mut().unwrap().event_type =
-                                from_utf8(value).unwrap().to_string()
-                        }
-                        _ => event.as_mut().unwrap().set_field(key, value),
-                    };
+            let mut event = event.as_mut().unwrap();
 
-                    println!("key: {}, value: {}", key, from_utf8(value).unwrap());
-                }
-                None => {
-                    println!("some kind of weird line");
-                }
-            },
+            if key == "event" {
+                event.event_type = from_utf8(value).unwrap().to_string();
+            } else {
+                event.set_field(key, value);
+            }
         }
     }
 
     Err("oops".to_string())
+}
+
+fn parse_field(line: &[u8]) -> Option<(&str, &[u8])> {
+    match line[0] {
+        b':' => {
+            println!(
+                "comment: {}",
+                from_utf8(&line[1..]).unwrap_or("<bad utf-8>")
+            );
+            None
+        }
+        _ => match line.iter().position(|&b| b':' == b) {
+            Some(colon_pos) => {
+                let key = &line[0..colon_pos];
+                let key = from_utf8(key).unwrap();
+                let value = &line[colon_pos + 1..];
+                let value = match value.iter().position(|&b| !b.is_ascii_whitespace()) {
+                    Some(start) => &value[start..],
+                    None => b"",
+                };
+
+                println!("key: {}, value: {}", key, from_utf8(value).unwrap());
+
+                Some((key, value))
+            }
+            None => {
+                println!("some kind of weird line");
+                None
+            }
+        },
+    }
 }
 
 // TODO is all of the following unnecessary?
@@ -243,41 +251,18 @@ where
                 continue;
             }
 
-            match line[0] {
-                b':' => {
-                    println!(
-                        "comment: {}",
-                        from_utf8(&line[1..]).unwrap_or("<bad utf-8>")
-                    );
-                    continue;
+            if let Some((key, value)) = parse_field(line) {
+                if self.event.is_none() {
+                    self.event = Some(Event::new());
                 }
-                _ => match line.iter().position(|&b| b':' == b) {
-                    Some(colon_pos) => {
-                        let key = &line[0..colon_pos];
-                        let key = from_utf8(key).unwrap();
-                        let value = &line[colon_pos + 1..];
-                        let value = match value.iter().position(|&b| !b.is_ascii_whitespace()) {
-                            Some(start) => &value[start..],
-                            None => b"",
-                        };
 
-                        if self.event.is_none() {
-                            self.event = Some(Event::new());
-                        }
-                        match key {
-                            "event" => {
-                                self.event.as_mut().unwrap().event_type =
-                                    from_utf8(value).unwrap().to_string()
-                            }
-                            _ => self.event.as_mut().unwrap().set_field(key, value),
-                        };
+                let mut event = self.event.as_mut().unwrap();
 
-                        println!("key: {}, value: {}", key, from_utf8(value).unwrap());
-                    }
-                    None => {
-                        println!("some kind of weird line");
-                    }
-                },
+                if key == "event" {
+                    event.event_type = from_utf8(value).unwrap().to_string();
+                } else {
+                    event.set_field(key, value);
+                }
             }
         }
 
