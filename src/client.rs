@@ -210,22 +210,17 @@ where
     fn poll(&mut self) -> Poll<Option<Event>, Error> {
         println!("decoder poll!");
 
-        let chunk = match self
-            .chunk_stream
-            .poll()
-            .map_err(|e| format!("stream error: {}", e).to_string())?
-        {
-            Async::Ready(Some(c)) => c,
-            Async::Ready(None) | Async::NotReady => {
-                if self.chunk_stream.is_done() {
-                    println!("decoder is done");
+        let chunk =
+            match try_ready!(self
+                .chunk_stream
+                .poll()
+                .map_err(|e| format!("stream error: {}", e).to_string()))
+            {
+                Some(c) => c,
+                None => {
                     return Ok(Async::Ready(None));
-                } else {
-                    println!("decoder is not ready");
-                    return Ok(Async::NotReady);
                 }
-            }
-        };
+            };
 
         println!("decoder got a chunk: {:?}", chunk);
 

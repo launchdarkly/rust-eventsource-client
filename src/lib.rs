@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate futures;
+
 mod client;
 
 pub use client::*;
