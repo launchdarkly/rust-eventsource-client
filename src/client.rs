@@ -200,6 +200,8 @@ where
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Event>, Error> {
+        println!("decoder poll!");
+
         let chunk = match self
             .chunk_stream
             .poll()
@@ -219,29 +221,26 @@ where
 
         println!("decoder got a chunk: {:?}", chunk);
 
-        if chunk[chunk.len() - 1] != b'\n' {
+        let chunk = if chunk[chunk.len() - 1] == b'\n' {
+            // strip off final newline so that .split below doesn't yield a
+            // bogus empty string as the last "line"
+            &chunk[..chunk.len() - 1]
+        } else {
             println!("Chunk does not end with newline!");
             // TODO
-        }
+            &chunk
+        };
 
         let lines = chunk.split(|&b| b'\n' == b);
+        let mut seen_empty_line = false;
 
         for line in lines {
             println!("Line: {}", from_utf8(line).unwrap());
 
             if line.is_empty() {
-                println!(
-                    "emptyline (event is {:?})",
-                    self.event.as_ref().map(|_| "<event>")
-                );
-                match &self.event {
-                    None => return Ok(Async::NotReady),
-                    Some(event) => {
-                        let event = event.clone();
-                        self.event = None;
-                        return Ok(Async::Ready(Some(event)));
-                    }
-                }
+                println!("emptyline");
+                seen_empty_line = true;
+                continue;
             }
 
             match line[0] {
@@ -282,6 +281,25 @@ where
             }
         }
 
-        Ok(Async::NotReady)
+        println!(
+            "seen empty line: {} (event is {:?})",
+            seen_empty_line,
+            self.event.as_ref().map(|_| "<event>")
+        );
+
+        /*TODO wrong! need to poll in a loop*/
+
+        match (seen_empty_line, &self.event) {
+            (_, None) => Ok(Async::NotReady), // TODO wrong
+            (true, Some(event)) => {
+                let event = event.clone();
+                self.event = None;
+                Ok(Async::Ready(Some(event)))
+            }
+            (false, Some(_)) => {
+                println!("Haven't seen an empty line in this whole chunk, weird");
+                Ok(Async::NotReady) // TODO wrong
+            }
+        }
     }
 }
