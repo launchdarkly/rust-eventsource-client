@@ -10,7 +10,6 @@ use reqwest::r#async as ra;
  * TODO remove debug output
  * TODO reconnect
  * TODO improve error handling (less unwrap)
- * TODO consider lines split across chunks?
  */
 
 pub type Error = String; // TODO enum
@@ -178,14 +177,13 @@ fn parse_field(line: &[u8]) -> Option<(&str, &[u8])> {
     }
 }
 
-// TODO is all of the following unnecessary?
 use futures::stream::Fuse;
 use futures::{Async, Poll};
 
 #[must_use = "streams do nothing unless polled"]
 struct Decoded<S> {
     chunk_stream: Fuse<S>,
-    incomplete_line: Option<Vec<u8>>,
+    incomplete_chunk: Option<Vec<u8>>,
     event: Option<Event>,
 }
 
@@ -193,7 +191,7 @@ impl<S: Stream> Decoded<S> {
     fn new(s: S) -> Decoded<S> {
         return Decoded {
             chunk_stream: s.fuse(),
-            incomplete_line: None,
+            incomplete_chunk: None,
             event: None,
         };
     }
@@ -225,14 +223,23 @@ where
 
             println!("decoder got a chunk: {:?}", chunk);
 
-            let chunk = if chunk[chunk.len() - 1] == b'\n' {
+            if self.incomplete_chunk.is_none() {
+                self.incomplete_chunk = Some(chunk.to_vec());
+            } else {
+                self.incomplete_chunk
+                    .as_mut()
+                    .unwrap()
+                    .extend(chunk.into_iter());
+            }
+
+            let incomplete_chunk = self.incomplete_chunk.as_ref().unwrap();
+            let chunk = if incomplete_chunk.ends_with(b"\n") {
                 // strip off final newline so that .split below doesn't yield a
                 // bogus empty string as the last "line"
-                &chunk[..chunk.len() - 1]
+                &incomplete_chunk[..incomplete_chunk.len() - 1]
             } else {
                 println!("Chunk does not end with newline!");
-                // TODO
-                &chunk
+                continue;
             };
 
             let lines = chunk.split(|&b| b'\n' == b);
