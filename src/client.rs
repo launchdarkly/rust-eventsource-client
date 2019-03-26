@@ -12,7 +12,10 @@ use reqwest::r#async as ra;
  * TODO improve error handling (less unwrap)
  */
 
-pub type Error = String; // TODO enum
+#[derive(Debug)]
+pub enum Error {
+    HttpStream(Box<std::error::Error + Send + 'static>),
+}
 
 #[derive(Clone, Debug)]
 // TODO can we make this require less copying?
@@ -29,8 +32,8 @@ impl Event {
         }
     }
 
-    pub fn field(&self, name: &str) -> &[u8] {
-        &self.fields[name.into()]
+    pub fn field(&self, name: &str) -> Option<&[u8]> {
+        self.fields.get(name.into()).map(|buf| buf.as_slice())
     }
 
     fn set_field(&mut self, name: &str, value: &[u8]) {
@@ -42,7 +45,7 @@ impl std::ops::Index<&str> for Event {
     type Output = [u8];
 
     fn index(&self, name: &str) -> &[u8] {
-        self.field(name)
+        &self.fields[name.into()]
     }
 }
 
@@ -156,7 +159,7 @@ impl<S: Stream> Decoded<S> {
 impl<S> Stream for Decoded<S>
 where
     S: Stream<Item = ra::Chunk>,
-    S::Error: std::fmt::Display,
+    S::Error: std::error::Error + Send + 'static,
 {
     type Item = Event;
     type Error = Error;
@@ -166,11 +169,10 @@ where
         println!("decoder poll!");
 
         loop {
-            let chunk = match try_ready!(self.chunk_stream.poll().map_err(|e| format!(
-                "stream error: {}",
-                e
-            )
-            .to_string()))
+            let chunk = match try_ready!(self
+                .chunk_stream
+                .poll()
+                .map_err(|e| Error::HttpStream(Box::new(e))))
             {
                 Some(c) => c,
                 None => {
