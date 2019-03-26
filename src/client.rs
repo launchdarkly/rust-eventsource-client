@@ -9,12 +9,13 @@ use reqwest::r#async as ra;
 /*
  * TODO remove debug output
  * TODO reconnect
- * TODO improve error handling (less unwrap)
  */
 
 #[derive(Debug)]
 pub enum Error {
+    HttpRequest(Box<std::error::Error + Send + 'static>),
     HttpStream(Box<std::error::Error + Send + 'static>),
+    InvalidLine(String),
 }
 
 #[derive(Clone, Debug)]
@@ -23,6 +24,8 @@ pub struct Event {
     pub event_type: String,
     fields: Map<String, Vec<u8>>,
 }
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 impl Event {
     fn new() -> Event {
@@ -57,9 +60,10 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
-    pub fn header(mut self, key: &'static str, value: &str) -> ClientBuilder {
-        self.headers.insert(key, value.parse().unwrap());
-        self
+    pub fn header(mut self, key: &'static str, value: &str) -> Result<ClientBuilder> {
+        let value = value.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        self.headers.insert(key, value);
+        Ok(self)
     }
 
     pub fn build(self) -> Client {
@@ -76,11 +80,14 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn for_url<U: r::IntoUrl>(url: U) -> ClientBuilder {
-        ClientBuilder {
-            url: url.into_url().unwrap(),
+    pub fn for_url<U: r::IntoUrl>(url: U) -> Result<ClientBuilder> {
+        let url = url
+            .into_url()
+            .map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        Ok(ClientBuilder {
+            url: url,
             headers: r::header::HeaderMap::new(),
-        }
+        })
     }
 
     pub fn stream(&mut self) -> EventStream {
@@ -103,36 +110,32 @@ impl Client {
     }
 }
 
-fn parse_field(line: &[u8]) -> Option<(&str, &[u8])> {
-    match line[0] {
-        b':' => {
+fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
+    match line.iter().position(|&b| b':' == b) {
+        Some(0) => {
             println!(
                 "comment: {}",
                 from_utf8(&line[1..]).unwrap_or("<bad utf-8>")
             );
-            None
+            Ok(None)
         }
-        _ => match line.iter().position(|&b| b':' == b) {
-            Some(colon_pos) => {
-                let key = &line[0..colon_pos];
-                let key = from_utf8(key).unwrap();
-                let value = &line[colon_pos + 1..];
-                let value = match value.iter().position(|&b| !b.is_ascii_whitespace()) {
-                    Some(start) => &value[start..],
-                    None => b"",
-                };
+        Some(colon_pos) => {
+            let key = &line[0..colon_pos];
+            let key = from_utf8(key)
+                .map_err(|e| Error::InvalidLine(format!("malformed key: {:?}", e)))?;
+            let value = &line[colon_pos + 1..];
+            let value = match value.iter().position(|&b| !b.is_ascii_whitespace()) {
+                Some(start) => &value[start..],
+                None => b"",
+            };
 
-                let mut val_for_printing = from_utf8(value).unwrap().to_string();
-                val_for_printing.truncate(100);
-                println!("key: {}, value: {}", key, val_for_printing);
+            let mut val_for_printing = from_utf8(value).unwrap().to_string();
+            val_for_printing.truncate(100);
+            println!("key: {}, value: {}", key, val_for_printing);
 
-                Some((key, value))
-            }
-            None => {
-                println!("some kind of weird line");
-                None
-            }
-        },
+            Ok(Some((key, value)))
+        }
+        None => Err(Error::InvalidLine("line missing ':' byte".to_string())),
     }
 }
 
@@ -217,18 +220,28 @@ where
                     continue;
                 }
 
-                if let Some((key, value)) = parse_field(line) {
-                    if self.event.is_none() {
-                        self.event = Some(Event::new());
-                    }
+                match parse_field(line) {
+                    Ok(Some((key, value))) => {
+                        if self.event.is_none() {
+                            self.event = Some(Event::new());
+                        }
 
-                    let mut event = self.event.as_mut().unwrap();
+                        let mut event = self.event.as_mut().unwrap();
 
-                    if key == "event" {
-                        event.event_type = from_utf8(value).unwrap().to_string();
-                    } else {
-                        event.set_field(key, value);
+                        if key == "event" {
+                            match from_utf8(value) {
+                                Ok(value) => event.event_type = value.to_string(),
+                                Err(e) => {
+                                    println!("Malformed event type: {:?}", e);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            event.set_field(key, value);
+                        }
                     }
+                    Ok(None) => (),
+                    Err(e) => println!("couldn't parse line: {:?}", e),
                 }
             }
 
