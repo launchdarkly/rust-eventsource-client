@@ -119,7 +119,9 @@ fn parse_field(line: &[u8]) -> Option<(&str, &[u8])> {
                     None => b"",
                 };
 
-                println!("key: {}, value: {}", key, from_utf8(value).unwrap());
+                let mut val_for_printing = from_utf8(value).unwrap().to_string();
+                val_for_printing.truncate(100);
+                println!("key: {}, value: {}", key, val_for_printing);
 
                 Some((key, value))
             }
@@ -159,6 +161,7 @@ where
     type Item = Event;
     type Error = Error;
 
+    // TODO can this be simplified using tokio's Framed?
     fn poll(&mut self) -> Poll<Option<Event>, Error> {
         println!("decoder poll!");
 
@@ -175,7 +178,9 @@ where
                 }
             };
 
-            println!("decoder got a chunk: {:?}", chunk);
+            let mut chunk_for_printing = from_utf8(&chunk).unwrap().to_string();
+            chunk_for_printing.truncate(100);
+            println!("decoder got a chunk: {:?}", chunk_for_printing);
 
             if self.incomplete_chunk.is_none() {
                 self.incomplete_chunk = Some(chunk.to_vec());
@@ -200,7 +205,9 @@ where
             let mut seen_empty_line = false;
 
             for line in lines {
-                println!("Line: {}", from_utf8(line).unwrap());
+                let mut line_for_printing = from_utf8(line).unwrap().to_string();
+                line_for_printing.truncate(100);
+                println!("Line: {}", line_for_printing);
 
                 if line.is_empty() {
                     println!("emptyline");
