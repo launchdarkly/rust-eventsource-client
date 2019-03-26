@@ -96,54 +96,8 @@ impl Client {
                 e
             });
 
-        //Box::new(
-        //fut_stream_chunks
-        //.flatten_stream()
-        //.map_err(|e| format!("error = {:?}", e).to_string())
-        //.map(|c| decode_chunk(c).expect("bad decode"))
-        //.filter_map(|opt| opt),
-        //)
         Box::new(Decoded::new(fut_stream_chunks.flatten_stream()))
     }
-}
-
-// Decode a chunk into an event, assuming that events are not split between
-// chunks (i.e. that each chunk contains either 0 or 1 event).
-// TODO that is FALSE
-fn decode_chunk(chunk: ra::Chunk) -> Result<Option<Event>, Error> {
-    println!("decoder got a chunk: {:?}", chunk);
-
-    let mut event: Option<Event> = None;
-
-    // TODO technically this doesn't handle newlines quite right.
-    // The spec says lines are newline-terminated, rather than newline-separated
-    // as this assumes, so we end up processing bogus empty strings.
-    let lines = chunk.split(|b| &b'\n' == b);
-
-    for line in lines {
-        println!("splat: {:?}", from_utf8(line).unwrap());
-
-        if line.is_empty() {
-            println!("emptyline");
-            return Ok(event);
-        }
-
-        if let Some((key, value)) = parse_field(line) {
-            if event.is_none() {
-                event = Some(Event::new());
-            }
-
-            let mut event = event.as_mut().unwrap();
-
-            if key == "event" {
-                event.event_type = from_utf8(value).unwrap().to_string();
-            } else {
-                event.set_field(key, value);
-            }
-        }
-    }
-
-    Err("oops".to_string())
 }
 
 fn parse_field(line: &[u8]) -> Option<(&str, &[u8])> {
