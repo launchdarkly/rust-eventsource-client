@@ -8,3 +8,6 @@ edition = "2018"
 futures = "0.1.25"
 reqwest = "0.9.11"
 tokio = "0.1.16"
+
+[dev-dependencies]
+maplit = "1.0.1"

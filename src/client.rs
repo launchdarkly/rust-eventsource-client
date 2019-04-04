@@ -16,9 +16,37 @@ pub enum Error {
     HttpRequest(Box<std::error::Error + Send + 'static>),
     HttpStream(Box<std::error::Error + Send + 'static>),
     InvalidLine(String),
+    InvalidEventType(std::str::Utf8Error),
 }
 
-#[derive(Clone, Debug)]
+impl PartialEq<Error> for Error {
+    fn eq(&self, other: &Error) -> bool {
+        use Error::*;
+        if let (InvalidLine(msg1), InvalidLine(msg2)) = (self, other) {
+            return msg1 == msg2;
+        }
+        false
+    }
+}
+
+impl Error {
+    pub fn is_http_stream_error(&self) -> bool {
+        if let Error::HttpStream(_) = self {
+            return true;
+        }
+        false
+    }
+
+    pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::HttpRequest(err) => Some(err.as_ref()),
+            Error::HttpStream(err) => Some(err.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 // TODO can we make this require less copying?
 pub struct Event {
     pub event_type: String,
@@ -129,7 +157,7 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
                 None => b"",
             };
 
-            let mut val_for_printing = from_utf8(value).unwrap().to_string();
+            let mut val_for_printing = from_utf8(value).unwrap_or("<bad utf-8>").to_string();
             val_for_printing.truncate(100);
             println!("key: {}, value: {}", key, val_for_printing);
 
@@ -183,7 +211,7 @@ where
                 }
             };
 
-            let mut chunk_for_printing = from_utf8(&chunk).unwrap().to_string();
+            let mut chunk_for_printing = from_utf8(&chunk).unwrap_or("<bad utf-8>").to_string();
             chunk_for_printing.truncate(100);
             println!("decoder got a chunk: {:?}", chunk_for_printing);
 
@@ -210,7 +238,7 @@ where
             let mut seen_empty_line = false;
 
             for line in lines {
-                let mut line_for_printing = from_utf8(line).unwrap().to_string();
+                let mut line_for_printing = from_utf8(line).unwrap_or("<bad utf-8>").to_string();
                 line_for_printing.truncate(100);
                 println!("Line: {}", line_for_printing);
 
@@ -220,28 +248,20 @@ where
                     continue;
                 }
 
-                match parse_field(line) {
-                    Ok(Some((key, value))) => {
-                        if self.event.is_none() {
-                            self.event = Some(Event::new());
-                        }
-
-                        let mut event = self.event.as_mut().unwrap();
-
-                        if key == "event" {
-                            match from_utf8(value) {
-                                Ok(value) => event.event_type = value.to_string(),
-                                Err(e) => {
-                                    println!("Malformed event type: {:?}", e);
-                                    continue;
-                                }
-                            }
-                        } else {
-                            event.set_field(key, value);
-                        }
+                if let Some((key, value)) = parse_field(line)? {
+                    if self.event.is_none() {
+                        self.event = Some(Event::new());
                     }
-                    Ok(None) => (),
-                    Err(e) => println!("couldn't parse line: {:?}", e),
+
+                    let mut event = self.event.as_mut().unwrap();
+
+                    if key == "event" {
+                        event.event_type = from_utf8(value)
+                            .map_err(Error::InvalidEventType)?
+                            .to_string();
+                    } else {
+                        event.set_field(key, value);
+                    }
                 }
             }
 
@@ -262,6 +282,219 @@ where
                     println!("Haven't seen an empty line in this whole chunk, weird")
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Error::*, *};
+
+    fn invalid(msg: &str) -> Error {
+        InvalidLine(msg.to_string())
+    }
+
+    fn field<'a>(key: &'a str, value: &'a [u8]) -> Result<Option<(&'a str, &'a [u8])>> {
+        Ok(Some((key, value)))
+    }
+
+    #[test]
+    fn test_parse_field_invalid() {
+        assert_eq!(parse_field(b""), Err(invalid("line missing ':' byte")));
+
+        assert_eq!(parse_field(b"event"), Err(invalid("line missing ':' byte")));
+
+        match parse_field(b"\x80: invalid UTF-8") {
+            Err(InvalidLine(msg)) => assert!(msg.contains("Utf8Error")),
+            res => panic!("expected InvalidLine error, got {:?}", res),
+        }
+    }
+
+    #[test]
+    fn test_parse_field_comments() {
+        assert_eq!(parse_field(b":"), Ok(None));
+        assert_eq!(parse_field(b": hello \0 world"), Ok(None));
+        assert_eq!(parse_field(b": event: foo"), Ok(None));
+    }
+
+    #[test]
+    fn test_parse_field_valid() {
+        assert_eq!(parse_field(b"event:foo"), field("event", b"foo"));
+        assert_eq!(parse_field(b"event: foo"), field("event", b"foo"));
+        assert_eq!(parse_field(b"event:  foo"), field("event", b"foo"));
+        assert_eq!(parse_field(b"event:\tfoo"), field("event", b"foo"));
+        assert_eq!(parse_field(b"event: foo "), field("event", b"foo "));
+
+        assert_eq!(parse_field(b" : foo"), field(" ", b"foo"));
+        assert_eq!(parse_field(b"\xe2\x98\x83: foo"), field("☃", b"foo"));
+    }
+
+    #[derive(Debug)]
+    struct DummyError(&'static str);
+
+    use std::fmt::{self, Display, Formatter};
+
+    impl Display for DummyError {
+        fn fmt(&self, f: &mut Formatter) -> std::result::Result<(), fmt::Error> {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl std::error::Error for DummyError {}
+
+    fn chunk(bytes: &[u8]) -> ra::Chunk {
+        let mut chonk = ra::Chunk::default();
+        chonk.extend(bytes.to_owned());
+        chonk
+    }
+
+    fn event(typ: &str, fields: &Map<&str, &[u8]>) -> Event {
+        let mut evt = Event::new();
+        evt.event_type = typ.to_string();
+        for (k, v) in fields {
+            evt.set_field(k, v);
+        }
+        evt
+    }
+
+    use futures::stream;
+    use Async::{NotReady, Ready};
+
+    fn one_chunk(bytes: &[u8]) -> impl Stream<Item = ra::Chunk, Error = DummyError> {
+        stream::once(Ok(chunk(bytes)))
+    }
+
+    fn delay_one_poll<T, E>() -> impl Stream<Item = T, Error = E> {
+        let mut ready = false;
+
+        stream::poll_fn(move || {
+            if ready {
+                Ok(Ready(None))
+            } else {
+                ready = true;
+                Ok(NotReady)
+            }
+        })
+    }
+
+    fn delay_one_then<T, E>(t: T) -> impl Stream<Item = T, Error = E> {
+        delay_one_poll().chain(stream::once(Ok(t)))
+    }
+
+    #[test]
+    fn test_decod() {
+        let empty = stream::empty::<ra::Chunk, DummyError>();
+        assert_eq!(Decoded::new(empty).poll(), Ok(Ready(None)));
+
+        assert_eq!(Decoded::new(one_chunk(b":hello\n")).poll(), Ok(Ready(None)));
+
+        //let one_comment_unterminated =
+        //futures::stream::once::<ra::Chunk, DummyError>(Ok(chunk(b":hello")));
+        //let mut decoded = Decoded::new(one_comment_unterminated);
+        //assert_eq!(decoded.poll(), Err(UnexpectedEof));
+
+        assert_eq!(
+            Decoded::new(one_chunk(b"message: hello\n")).poll(),
+            Ok(Ready(None))
+        );
+
+        let interrupted_after_comment =
+            one_chunk(b":hello\n").chain(stream::poll_fn(|| Err(DummyError("read error"))));
+        match Decoded::new(interrupted_after_comment).poll() {
+            Err(err) => {
+                assert!(err.is_http_stream_error());
+                let description = format!("{}", err.source().unwrap());
+                assert!(description.contains("read error"), description);
+            }
+            res => panic!("expected HttpStream error, got {:?}", res),
+        }
+
+        let interrupted_after_field =
+            one_chunk(b"message: hello\n").chain(stream::poll_fn(|| Err(DummyError("read error"))));
+        match Decoded::new(interrupted_after_field).poll() {
+            Err(err) => {
+                assert!(err.is_http_stream_error());
+                let description = format!("{}", err.source().unwrap());
+                assert!(description.contains("read error"), description);
+            }
+            res => panic!("expected HttpStream error, got {:?}", res),
+        }
+
+        let mut decoded = Decoded::new(one_chunk(b"message: hello\n\n"));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded = Decoded::new(one_chunk(b"event: test\n\n"));
+        assert_eq!(decoded.poll(), Ok(Ready(Some(event("test", &Map::new())))));
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded = Decoded::new(one_chunk(b"event: test\nmessage: hello\nto: world\n\n"));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "test",
+                &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded = Decoded::new(one_chunk(b"message:").chain(one_chunk(b"hello\n\n")));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded =
+            Decoded::new(one_chunk(b"message:").chain(delay_one_then(chunk(b"hello\n\n"))));
+        assert_eq!(decoded.poll(), Ok(NotReady));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let interrupted_after_event = one_chunk(b"message: hello\n\n")
+            .chain(stream::poll_fn(|| Err(DummyError("read error"))));
+        let mut decoded = Decoded::new(interrupted_after_event);
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        match decoded.poll() {
+            Err(err) => {
+                assert!(err.is_http_stream_error());
+                let description = format!("{}", err.source().unwrap());
+                assert!(description.contains("read error"), description);
+            }
+            res => panic!("expected HttpStream error, got {:?}", res),
+        }
+
+        let mut decoded = Decoded::new(one_chunk(b"event: \x80\n\n"));
+        match decoded.poll() {
+            Err(InvalidEventType(_)) => (),
+            res => panic!("expected InvalidEventType error, got {:?}", res),
+        }
+
+        let mut decoded = Decoded::new(one_chunk(b"\x80: invalid UTF-8\n\n"));
+        match decoded.poll() {
+            Err(InvalidLine(_)) => (),
+            res => panic!("expected InvalidLine error, got {:?}", res),
         }
     }
 }
