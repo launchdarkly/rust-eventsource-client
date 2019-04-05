@@ -274,10 +274,9 @@ where
 
             match (seen_empty_line, &self.event) {
                 (_, None) => (),
-                (true, Some(event)) => {
-                    let event = event.clone();
-                    self.event = None;
-                    return Ok(Async::Ready(Some(event)));
+                (true, Some(_)) => {
+                    let event = std::mem::replace(&mut self.event, None);
+                    return Ok(Async::Ready(event));
                 }
                 (false, Some(_)) => {
                     println!("Haven't seen an empty line in this whole chunk, weird")
