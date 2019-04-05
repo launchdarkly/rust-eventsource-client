@@ -15,6 +15,7 @@ use reqwest::r#async as ra;
 pub enum Error {
     HttpRequest(Box<std::error::Error + Send + 'static>),
     HttpStream(Box<std::error::Error + Send + 'static>),
+    UnexpectedEof,
     InvalidLine(String),
     InvalidEventType(std::str::Utf8Error),
 }
@@ -24,6 +25,8 @@ impl PartialEq<Error> for Error {
         use Error::*;
         if let (InvalidLine(msg1), InvalidLine(msg2)) = (self, other) {
             return msg1 == msg2;
+        } else if let (UnexpectedEof, UnexpectedEof) = (self, other) {
+            return true;
         }
         false
     }
@@ -173,7 +176,7 @@ use futures::{Async, Poll};
 #[must_use = "streams do nothing unless polled"]
 struct Decoded<S> {
     chunk_stream: Fuse<S>,
-    incomplete_chunk: Option<Vec<u8>>,
+    incomplete_line: Option<Vec<u8>>,
     event: Option<Event>,
 }
 
@@ -181,7 +184,7 @@ impl<S: Stream> Decoded<S> {
     fn new(s: S) -> Decoded<S> {
         return Decoded {
             chunk_stream: s.fuse(),
-            incomplete_chunk: None,
+            incomplete_line: None,
             event: None,
         };
     }
@@ -206,33 +209,31 @@ where
                 .map_err(|e| Error::HttpStream(Box::new(e))))
             {
                 Some(c) => c,
-                None => {
-                    return Ok(Async::Ready(None));
-                }
+                None => match self.incomplete_line {
+                    None => return Ok(Async::Ready(None)),
+                    Some(_) => return Err(Error::UnexpectedEof),
+                },
             };
 
             let mut chunk_for_printing = from_utf8(&chunk).unwrap_or("<bad utf-8>").to_string();
             chunk_for_printing.truncate(100);
             println!("decoder got a chunk: {:?}", chunk_for_printing);
 
-            if self.incomplete_chunk.is_none() {
-                self.incomplete_chunk = Some(chunk.to_vec());
-            } else {
-                self.incomplete_chunk
-                    .as_mut()
-                    .unwrap()
-                    .extend(chunk.into_iter());
+            match self.incomplete_line.as_mut() {
+                None => self.incomplete_line = Some(chunk.to_vec()),
+                Some(incomplete_line) => incomplete_line.extend(chunk.into_iter()),
             }
 
-            let incomplete_chunk = self.incomplete_chunk.as_ref().unwrap();
-            let chunk = if incomplete_chunk.ends_with(b"\n") {
-                // strip off final newline so that .split below doesn't yield a
-                // bogus empty string as the last "line"
-                &incomplete_chunk[..incomplete_chunk.len() - 1]
+            let incomplete_line = self.incomplete_line.as_ref().unwrap();
+            let chunk = if incomplete_line.ends_with(b"\n") {
+                std::mem::replace(&mut self.incomplete_line, None).unwrap()
             } else {
                 println!("Chunk does not end with newline!");
                 continue;
             };
+            // strip off final newline so that .split below doesn't yield a
+            // bogus empty string as the last "line"
+            let chunk = &chunk[..chunk.len() - 1];
 
             let lines = chunk.split(|&b| b'\n' == b);
             let mut seen_empty_line = false;
@@ -388,10 +389,10 @@ mod tests {
 
         assert_eq!(Decoded::new(one_chunk(b":hello\n")).poll(), Ok(Ready(None)));
 
-        //let one_comment_unterminated =
-        //futures::stream::once::<ra::Chunk, DummyError>(Ok(chunk(b":hello")));
-        //let mut decoded = Decoded::new(one_comment_unterminated);
-        //assert_eq!(decoded.poll(), Err(UnexpectedEof));
+        let one_comment_unterminated =
+            futures::stream::once::<ra::Chunk, DummyError>(Ok(chunk(b":hello")));
+        let mut decoded = Decoded::new(one_comment_unterminated);
+        assert_eq!(decoded.poll(), Err(UnexpectedEof));
 
         assert_eq!(
             Decoded::new(one_chunk(b"message: hello\n")).poll(),
