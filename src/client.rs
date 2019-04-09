@@ -129,7 +129,7 @@ impl Client {
         let fut_stream_chunks = resp
             .map_err(|e| Error::HttpRequest(Box::new(e)))
             .and_then(|resp| {
-                println!("resp: {:?}", resp);
+                debug!("HTTP response: {:#?}", resp);
 
                 match resp.error_for_status() {
                     Ok(resp) => {
@@ -144,13 +144,20 @@ impl Client {
     }
 }
 
+const LOGIFY_MAX_CHARS: usize = 100;
+fn logify(bytes: &[u8]) -> &str {
+    let stringified = from_utf8(bytes).unwrap_or("<bad utf8>");
+    if stringified.len() <= LOGIFY_MAX_CHARS {
+        stringified
+    } else {
+        &stringified[..LOGIFY_MAX_CHARS - 1]
     }
 }
 
 fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
     match line.iter().position(|&b| b':' == b) {
         Some(0) => {
-            println!(
+            debug!(
                 "comment: {}",
                 from_utf8(&line[1..]).unwrap_or("<bad utf-8>")
             );
@@ -166,9 +173,7 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
                 None => b"",
             };
 
-            let mut val_for_printing = from_utf8(value).unwrap_or("<bad utf-8>").to_string();
-            val_for_printing.truncate(100);
-            println!("key: {}, value: {}", key, val_for_printing);
+            debug!("key: {}, value: {}", key, logify(value));
 
             Ok(Some((key, value)))
         }
@@ -206,7 +211,7 @@ where
 
     // TODO can this be simplified using tokio's Framed?
     fn poll(&mut self) -> Poll<Option<Event>, Error> {
-        println!("decoder poll!");
+        trace!("Decoded::poll");
 
         loop {
             let chunk = match try_ready!(self.chunk_stream.poll()) {
@@ -217,9 +222,7 @@ where
                 },
             };
 
-            let mut chunk_for_printing = from_utf8(&chunk).unwrap_or("<bad utf-8>").to_string();
-            chunk_for_printing.truncate(100);
-            println!("decoder got a chunk: {:?}", chunk_for_printing);
+            trace!("decoder got a chunk: {:?}", logify(&chunk));
 
             match self.incomplete_line.as_mut() {
                 None => self.incomplete_line = Some(chunk.to_vec()),
@@ -230,7 +233,7 @@ where
             let chunk = if incomplete_line.ends_with(b"\n") {
                 std::mem::replace(&mut self.incomplete_line, None).unwrap()
             } else {
-                println!("Chunk does not end with newline!");
+                debug!("Chunk does not end with newline!");
                 continue;
             };
             // strip off final newline so that .split below doesn't yield a
@@ -241,12 +244,10 @@ where
             let mut seen_empty_line = false;
 
             for line in lines {
-                let mut line_for_printing = from_utf8(line).unwrap_or("<bad utf-8>").to_string();
-                line_for_printing.truncate(100);
-                println!("Line: {}", line_for_printing);
+                trace!("Decoder got a line: {}", logify(line));
 
                 if line.is_empty() {
-                    println!("emptyline");
+                    trace!("empty line");
                     seen_empty_line = true;
                     continue;
                 }
@@ -268,10 +269,10 @@ where
                 }
             }
 
-            println!(
+            trace!(
                 "seen empty line: {} (event is {:?})",
                 seen_empty_line,
-                self.event.as_ref().map(|_| "<event>")
+                self.event.as_ref().map(|event| &event.event_type)
             );
 
             match (seen_empty_line, &self.event) {
@@ -280,9 +281,7 @@ where
                     let event = std::mem::replace(&mut self.event, None);
                     return Ok(Async::Ready(event));
                 }
-                (false, Some(_)) => {
-                    println!("Haven't seen an empty line in this whole chunk, weird")
-                }
+                (false, Some(_)) => debug!("Haven't seen an empty line in this whole chunk, weird"),
             }
         }
     }
