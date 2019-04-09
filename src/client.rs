@@ -127,17 +127,23 @@ impl Client {
         let resp = request.send();
 
         let fut_stream_chunks = resp
+            .map_err(|e| Error::HttpRequest(Box::new(e)))
             .and_then(|resp| {
                 println!("resp: {:?}", resp);
 
-                future::ok(resp.into_body())
+                match resp.error_for_status() {
+                    Ok(resp) => {
+                        future::ok(resp.into_body().map_err(|e| Error::HttpStream(Box::new(e))))
+                    }
+                    Err(e) => future::err(Error::HttpRequest(Box::new(e))),
+                }
             })
-            .map_err(|e| {
-                println!("error = {:?}", e);
-                e
-            });
+            .flatten_stream();
 
-        Box::new(Decoded::new(fut_stream_chunks.flatten_stream()))
+        Box::new(Decoded::new(fut_stream_chunks))
+    }
+}
+
     }
 }
 
@@ -193,7 +199,7 @@ impl<S: Stream> Decoded<S> {
 impl<S> Stream for Decoded<S>
 where
     S: Stream<Item = ra::Chunk>,
-    S::Error: std::error::Error + Send + 'static,
+    Error: From<S::Error>,
 {
     type Item = Event;
     type Error = Error;
@@ -203,11 +209,7 @@ where
         println!("decoder poll!");
 
         loop {
-            let chunk = match try_ready!(self
-                .chunk_stream
-                .poll()
-                .map_err(|e| Error::HttpStream(Box::new(e))))
-            {
+            let chunk = match try_ready!(self.chunk_stream.poll()) {
                 Some(c) => c,
                 None => match self.incomplete_line {
                     None => return Ok(Async::Ready(None)),
@@ -342,6 +344,10 @@ mod tests {
 
     impl std::error::Error for DummyError {}
 
+    fn dummy_stream_error(msg: &'static str) -> Error {
+        Error::HttpStream(Box::new(DummyError(msg)))
+    }
+
     fn chunk(bytes: &[u8]) -> ra::Chunk {
         let mut chonk = ra::Chunk::default();
         chonk.extend(bytes.to_owned());
@@ -360,7 +366,7 @@ mod tests {
     use futures::stream;
     use Async::{NotReady, Ready};
 
-    fn one_chunk(bytes: &[u8]) -> impl Stream<Item = ra::Chunk, Error = DummyError> {
+    fn one_chunk(bytes: &[u8]) -> impl Stream<Item = ra::Chunk, Error = Error> {
         stream::once(Ok(chunk(bytes)))
     }
 
@@ -383,13 +389,13 @@ mod tests {
 
     #[test]
     fn test_decod() {
-        let empty = stream::empty::<ra::Chunk, DummyError>();
+        let empty = stream::empty::<ra::Chunk, Error>();
         assert_eq!(Decoded::new(empty).poll(), Ok(Ready(None)));
 
         assert_eq!(Decoded::new(one_chunk(b":hello\n")).poll(), Ok(Ready(None)));
 
         let one_comment_unterminated =
-            futures::stream::once::<ra::Chunk, DummyError>(Ok(chunk(b":hello")));
+            futures::stream::once::<ra::Chunk, Error>(Ok(chunk(b":hello")));
         let mut decoded = Decoded::new(one_comment_unterminated);
         assert_eq!(decoded.poll(), Err(UnexpectedEof));
 
@@ -399,7 +405,7 @@ mod tests {
         );
 
         let interrupted_after_comment =
-            one_chunk(b":hello\n").chain(stream::poll_fn(|| Err(DummyError("read error"))));
+            one_chunk(b":hello\n").chain(stream::poll_fn(|| Err(dummy_stream_error("read error"))));
         match Decoded::new(interrupted_after_comment).poll() {
             Err(err) => {
                 assert!(err.is_http_stream_error());
@@ -409,8 +415,8 @@ mod tests {
             res => panic!("expected HttpStream error, got {:?}", res),
         }
 
-        let interrupted_after_field =
-            one_chunk(b"message: hello\n").chain(stream::poll_fn(|| Err(DummyError("read error"))));
+        let interrupted_after_field = one_chunk(b"message: hello\n")
+            .chain(stream::poll_fn(|| Err(dummy_stream_error("read error"))));
         match Decoded::new(interrupted_after_field).poll() {
             Err(err) => {
                 assert!(err.is_http_stream_error());
@@ -467,7 +473,7 @@ mod tests {
         assert_eq!(decoded.poll(), Ok(Ready(None)));
 
         let interrupted_after_event = one_chunk(b"message: hello\n\n")
-            .chain(stream::poll_fn(|| Err(DummyError("read error"))));
+            .chain(stream::poll_fn(|| Err(dummy_stream_error("read error"))));
         let mut decoded = Decoded::new(interrupted_after_event);
         assert_eq!(
             decoded.poll(),
