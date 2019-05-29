@@ -209,7 +209,6 @@ where
     type Item = Event;
     type Error = Error;
 
-    // TODO can this be simplified using tokio's Framed?
     fn poll(&mut self) -> Poll<Option<Event>, Error> {
         trace!("Decoded::poll");
 
@@ -225,6 +224,7 @@ where
             trace!("decoder got a chunk: {:?}", logify(&chunk));
 
             match self.incomplete_line.as_mut() {
+                // TODO can we avoid these copies?
                 None => self.incomplete_line = Some(chunk.to_vec()),
                 Some(incomplete_line) => incomplete_line.extend(chunk.into_iter()),
             }
