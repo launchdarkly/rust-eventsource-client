@@ -11,12 +11,19 @@ use reqwest::r#async as ra;
  * TODO reconnect
  */
 
+/// Error type returned from this library's functions.
 #[derive(Debug)]
 pub enum Error {
+    /// The HTTP request failed.
     HttpRequest(Box<std::error::Error + Send + 'static>),
+    /// An error reading from the HTTP response body.
     HttpStream(Box<std::error::Error + Send + 'static>),
+    /// The HTTP response stream ended unexpectedly (e.g. in the
+    /// middle of an event).
     UnexpectedEof,
+    /// Encountered a line not conforming to the SSE protocol.
     InvalidLine(String),
+    /// Encountered an event type that is not a valid UTF-8 byte sequence.
     InvalidEventType(std::str::Utf8Error),
 }
 
@@ -91,6 +98,7 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
+    /// Set a HTTP header on the SSE request.
     pub fn header(mut self, key: &'static str, value: &str) -> Result<ClientBuilder> {
         let value = value.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
         self.headers.insert(key, value);
@@ -105,12 +113,19 @@ impl ClientBuilder {
     }
 }
 
+/// Client that connects to a server using the Server-Sent Events protocol
+/// and consumes the event stream indefinitely.
 pub struct Client {
     url: r::Url,
     headers: r::header::HeaderMap,
 }
 
 impl Client {
+    /// Construct a new `Client` (via a [`ClientBuilder`]). This will not
+    /// perform any network activity until [`.stream()`] is called.
+    ///
+    /// [`ClientBuilder`]: struct.ClientBuilder.html
+    /// [`.stream()`]: #method.stream
     pub fn for_url<U: r::IntoUrl>(url: U) -> Result<ClientBuilder> {
         let url = url
             .into_url()
@@ -121,6 +136,11 @@ impl Client {
         })
     }
 
+    /// Connect to the server and begin consuming the stream. Produces a
+    /// [`Stream`] of [`Event`]s.
+    ///
+    /// [`Stream`]: ../futures/stream/trait.Stream.html
+    /// [`Event`]: struct.Event.html
     pub fn stream(&mut self) -> EventStream {
         let http = ra::Client::new();
         let request = http.get(self.url.clone()).headers(self.headers.clone());
