@@ -1,0 +1,17 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/rust:latest
+
+    steps:
+      - checkout
+
+      - run: cargo check
+      - run: cargo build
+      - run: cargo test
+      - run: cargo doc
+
+      - store_artifacts:
+          path: target/doc
+          destination: doc
