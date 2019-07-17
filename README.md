@@ -42,3 +42,8 @@ working code.)
 
 * Retry for failed connections.
 * Reconnection if connection is interrupted.
+
+## Stability
+
+Early stage release for feedback purposes. May contain bugs or performance
+issues. API subject to change.
