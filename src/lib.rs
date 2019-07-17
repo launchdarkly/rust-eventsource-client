@@ -1,12 +1,14 @@
-//! Client for the Server-Sent Events protocol (aka eventsource).
+//! Client for the [Server-Sent Events] protocol (aka [EventSource]).
 //!
 //! ```
 //! use eventsource_client::Client;
 //! # use futures::{lazy, future::Future, stream::Stream};
+//!
 //! # fn main() -> Result<(), eventsource_client::Error> {
 //! let mut client = Client::for_url("https://example.com/stream")?
 //!     .header("Authorization", "Basic username:password")?
 //!     .build();
+//!
 //! # tokio::run(lazy(move || {
 //! client.stream()
 //!     .for_each(|event| {
@@ -18,6 +20,9 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//![Server-Sent Events]: https://html.spec.whatwg.org/multipage/server-sent-events.html
+//![EventSource]: https://developer.mozilla.org/en-US/docs/Web/API/EventSource
 
 #[macro_use]
 extern crate futures;
