@@ -10,7 +10,7 @@ jobs:
       - run: cargo check
       - run: cargo build
       - run: cargo test
-      - run: cargo doc
+      - run: cargo doc --no-deps
 
       - store_artifacts:
           path: target/doc
