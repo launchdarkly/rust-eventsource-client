@@ -10,8 +10,14 @@ jobs:
       - run:
           name: Install clippy
           command: rustup component add clippy
+      - run:
+          name: Install rustfmt
+          command: rustup component add rustfmt
 
       - run: cargo check
+      - run:
+          name: Check consistent formatting
+          command: cargo fmt && git diff --exit-code
       - run: cargo build
       - run: cargo test
       - run: cargo doc --no-deps
