@@ -7,10 +7,15 @@ jobs:
     steps:
       - checkout
 
+      - run:
+          name: Install clippy
+          command: rustup component add clippy
+
       - run: cargo check
       - run: cargo build
       - run: cargo test
       - run: cargo doc --no-deps
+      - run: cargo clippy
 
       - store_artifacts:
           path: target/doc
