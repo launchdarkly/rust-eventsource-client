@@ -12,3 +12,4 @@ reqwest = "0.9.11"
 [dev-dependencies]
 maplit = "1.0.1"
 simplelog = "0.5.3"
+tokio = "0.1.16"
