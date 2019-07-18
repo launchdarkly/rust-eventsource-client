@@ -26,3 +26,21 @@ jobs:
       - store_artifacts:
           path: target/doc
           destination: doc
+
+  publish:
+    docker:
+      - image: circleci/rust:latest
+
+    steps:
+      - checkout
+
+      - run: cargo publish
+
+workflows:
+  version: 2
+  build-publish:
+    jobs:
+      - build: {}
+      - publish:
+          requires:
+            - build
