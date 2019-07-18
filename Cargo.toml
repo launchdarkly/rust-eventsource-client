@@ -1,8 +1,11 @@
 [package]
 name = "eventsource-client"
 version = "0.1.0"
+description = "Client for the Server-Sent Events protocol (aka EventSource)"
+repository = "https://github.com/launchdarkly/rust-eventsource-client"
 authors = ["Sam Stokes <sstokes@launchdarkly.com>"]
 edition = "2018"
+license = "Apache-2.0"
 exclude = [
   ".circleci/*",
 ]
