@@ -4,7 +4,7 @@ use std::str::from_utf8;
 use futures::future::{self, Future};
 use futures::stream::Stream;
 use reqwest as r;
-use reqwest::r#async as ra;
+use reqwest::{r#async as ra, Url};
 
 /*
  * TODO remove debug output
@@ -129,6 +129,20 @@ impl Client {
     pub fn for_url<U: r::IntoUrl>(url: U) -> Result<ClientBuilder> {
         let url = url
             .into_url()
+            .map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        Ok(ClientBuilder {
+            url: url,
+            headers: r::header::HeaderMap::new(),
+        })
+    }
+
+    /// Construct a new `Client` (via a [`ClientBuilder`]). This will not
+    /// perform any network activity until [`.stream()`] is called.
+    ///
+    /// [`ClientBuilder`]: struct.ClientBuilder.html
+    /// [`.stream()`]: #method.stream
+    pub fn for_str(str_url: &str) -> Result<ClientBuilder> {
+        let url = Url::parse(str_url)
             .map_err(|e| Error::HttpRequest(Box::new(e)))?;
         Ok(ClientBuilder {
             url: url,
