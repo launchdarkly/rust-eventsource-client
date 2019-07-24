@@ -142,8 +142,7 @@ impl Client {
     /// [`ClientBuilder`]: struct.ClientBuilder.html
     /// [`.stream()`]: #method.stream
     pub fn for_str(str_url: &str) -> Result<ClientBuilder> {
-        let url = Url::parse(str_url)
-            .map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        let url = Url::parse(str_url).map_err(|e| Error::HttpRequest(Box::new(e)))?;
         Ok(ClientBuilder {
             url: url,
             headers: r::header::HeaderMap::new(),
