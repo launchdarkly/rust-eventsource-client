@@ -1,10 +1,12 @@
 use std::fmt::{self, Debug, Formatter};
+use std::time::{Duration, Instant};
 
 use futures::future::Future;
 use futures::stream::{MapErr, Stream};
 use futures::{Async, Poll};
 use reqwest as r;
 use reqwest::{r#async as ra, Url};
+use tokio::timer::Delay;
 
 use super::decode::{Decoded, EventStream};
 use super::error::{Error, Result};
@@ -84,18 +86,23 @@ struct ReconnectingRequest {
 
 enum State {
     New,
-    // TODO remove box somehow
-    Connecting(Box<dyn Future<Item = ra::Response, Error = Error> + Send>),
+    Connecting {
+        retry: bool,
+        // TODO remove box somehow
+        resp: Box<dyn Future<Item = ra::Response, Error = Error> + Send>,
+    },
     Connected(MapErr<ra::Decoder, fn(r::Error) -> Error>),
-    // TODO actually reconnect
+    WaitingToReconnect(Delay),
 }
 
 impl State {
     fn name(&self) -> &'static str {
         match self {
             State::New => "new",
-            State::Connecting(_) => "connecting",
+            State::Connecting { retry: false, .. } => "connecting(no-retry)",
+            State::Connecting { retry: true, .. } => "connecting(retry)",
             State::Connected(_) => "connected",
+            State::WaitingToReconnect(_) => "waiting-to-reconnect",
         }
     }
 }
@@ -117,6 +124,16 @@ impl ReconnectingRequest {
     }
 }
 
+impl ReconnectingRequest {
+    fn send_request(&self) -> impl Future<Item = ra::Response, Error = Error> + Send {
+        let request = self
+            .http
+            .get(self.props.url.clone())
+            .headers(self.props.headers.clone());
+        request.send().map_err(|e| Error::HttpRequest(Box::new(e)))
+    }
+}
+
 impl Stream for ReconnectingRequest {
     type Item = ra::Chunk;
     type Error = Error;
@@ -125,17 +142,36 @@ impl Stream for ReconnectingRequest {
         trace!("ReconnectingRequest::poll({:?})", &self.state);
 
         loop {
+            trace!("ReconnectingRequest::poll loop({:?})", &self.state);
             let new_state = match self.state {
+                // New immediately transitions to Connecting, and exists only
+                // to ensure that we only connect when polled.
                 State::New => {
-                    let request = self
-                        .http
-                        .get(self.props.url.clone())
-                        .headers(self.props.headers.clone());
-                    let resp = request.send().map_err(|e| Error::HttpRequest(Box::new(e)));
-                    State::Connecting(Box::new(resp))
+                    let resp = self.send_request();
+                    State::Connecting {
+                        retry: false,
+                        resp: Box::new(resp),
+                    }
                 }
-                State::Connecting(ref mut resp) => {
-                    let resp = try_ready!(resp.poll());
+                State::Connecting {
+                    retry,
+                    ref mut resp,
+                } => {
+                    let resp = match resp.poll() {
+                        Ok(Async::Ready(resp)) => resp,
+                        Ok(Async::NotReady) => return Ok(Async::NotReady),
+                        Err(e) => {
+                            warn!("request returned an error: {:?}", e);
+                            if retry {
+                                self.state = State::WaitingToReconnect(Delay::new(
+                                    Instant::now() + Duration::from_secs(1),
+                                ));
+                                continue;
+                            } else {
+                                return Err(e);
+                            }
+                        }
+                    };
                     debug!("HTTP response: {:#?}", resp);
 
                     match resp.error_for_status() {
@@ -145,11 +181,23 @@ impl Stream for ReconnectingRequest {
                         Err(e) => return Err(Error::HttpRequest(Box::new(e))),
                     }
                 }
-                State::Connected(ref mut chunks) => {
-                    // TODO no, handle err directly
-                    match try_ready!(chunks.poll()) {
-                        Some(c) => return Ok(Async::Ready(Some(c))),
-                        None => return Ok(Async::Ready(None)),
+                State::Connected(ref mut chunks) => match chunks.poll() {
+                    Ok(result) => return Ok(result),
+                    Err(e) => {
+                        warn!("chunk stream returned an error: {:?}", e);
+                        State::WaitingToReconnect(Delay::new(
+                            Instant::now() + Duration::from_secs(1),
+                        ))
+                    }
+                },
+                State::WaitingToReconnect(ref mut delay) => {
+                    try_ready!(delay.poll().map_err(|_| panic!("TODO")));
+                    // TODO backoff
+                    info!("Reconnecting");
+                    let resp = self.send_request();
+                    State::Connecting {
+                        retry: true,
+                        resp: Box::new(resp),
                     }
                 }
             };
