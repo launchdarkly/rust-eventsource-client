@@ -1,5 +1,8 @@
-use futures::future::{self, Future};
-use futures::stream::Stream;
+use std::fmt::{self, Debug, Formatter};
+
+use futures::future::Future;
+use futures::stream::{MapErr, Stream};
+use futures::{Async, Poll};
 use reqwest as r;
 use reqwest::{r#async as ra, Url};
 
@@ -26,17 +29,24 @@ impl ClientBuilder {
 
     pub fn build(self) -> Client {
         Client {
-            url: self.url,
-            headers: self.headers,
+            request_props: RequestProps {
+                url: self.url,
+                headers: self.headers,
+            },
         }
     }
+}
+
+#[derive(Clone)]
+struct RequestProps {
+    url: r::Url,
+    headers: r::header::HeaderMap,
 }
 
 /// Client that connects to a server using the Server-Sent Events protocol
 /// and consumes the event stream indefinitely.
 pub struct Client {
-    url: r::Url,
-    headers: r::header::HeaderMap,
+    request_props: RequestProps,
 }
 
 impl Client {
@@ -59,24 +69,91 @@ impl Client {
     /// [`Stream`]: ../futures/stream/trait.Stream.html
     /// [`Event`]: struct.Event.html
     pub fn stream(&mut self) -> EventStream {
+        Box::new(Decoded::new(ReconnectingRequest::new(
+            self.request_props.clone(),
+        )))
+    }
+}
+
+#[must_use = "streams do nothing unless polled"]
+struct ReconnectingRequest {
+    props: RequestProps,
+    http: ra::Client,
+    state: State,
+}
+
+enum State {
+    New,
+    // TODO remove box somehow
+    Connecting(Box<dyn Future<Item = ra::Response, Error = Error> + Send>),
+    Connected(MapErr<ra::Decoder, fn(r::Error) -> Error>),
+    // TODO actually reconnect
+}
+
+impl State {
+    fn name(&self) -> &'static str {
+        match self {
+            State::New => "new",
+            State::Connecting(_) => "connecting",
+            State::Connected(_) => "connected",
+        }
+    }
+}
+
+impl Debug for State {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+impl ReconnectingRequest {
+    fn new(props: RequestProps) -> ReconnectingRequest {
         let http = ra::Client::new();
-        let request = http.get(self.url.clone()).headers(self.headers.clone());
-        let resp = request.send();
+        ReconnectingRequest {
+            props,
+            http,
+            state: State::New,
+        }
+    }
+}
 
-        let fut_stream_chunks = resp
-            .map_err(|e| Error::HttpRequest(Box::new(e)))
-            .and_then(|resp| {
-                debug!("HTTP response: {:#?}", resp);
+impl Stream for ReconnectingRequest {
+    type Item = ra::Chunk;
+    type Error = Error;
 
-                match resp.error_for_status() {
-                    Ok(resp) => {
-                        future::ok(resp.into_body().map_err(|e| Error::HttpStream(Box::new(e))))
-                    }
-                    Err(e) => future::err(Error::HttpRequest(Box::new(e))),
+    fn poll(&mut self) -> Poll<Option<ra::Chunk>, Error> {
+        trace!("ReconnectingRequest::poll({:?})", &self.state);
+
+        loop {
+            let new_state = match self.state {
+                State::New => {
+                    let request = self
+                        .http
+                        .get(self.props.url.clone())
+                        .headers(self.props.headers.clone());
+                    let resp = request.send().map_err(|e| Error::HttpRequest(Box::new(e)));
+                    State::Connecting(Box::new(resp))
                 }
-            })
-            .flatten_stream();
+                State::Connecting(ref mut resp) => {
+                    let resp = try_ready!(resp.poll());
+                    debug!("HTTP response: {:#?}", resp);
 
-        Box::new(Decoded::new(fut_stream_chunks))
+                    match resp.error_for_status() {
+                        Ok(resp) => State::Connected(
+                            resp.into_body().map_err(|e| Error::HttpStream(Box::new(e))),
+                        ),
+                        Err(e) => return Err(Error::HttpRequest(Box::new(e))),
+                    }
+                }
+                State::Connected(ref mut chunks) => {
+                    // TODO no, handle err directly
+                    match try_ready!(chunks.poll()) {
+                        Some(c) => return Ok(Async::Ready(Some(c))),
+                        None => return Ok(Async::Ready(None)),
+                    }
+                }
+            };
+            self.state = new_state;
+        }
     }
 }
