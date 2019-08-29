@@ -35,8 +35,12 @@ extern crate log;
 extern crate maplit;
 
 mod client;
+mod decode;
+mod error;
 
 pub use client::*;
+pub use decode::{Event, EventStream};
+pub use error::*;
 
 #[cfg(test)]
 mod tests {
