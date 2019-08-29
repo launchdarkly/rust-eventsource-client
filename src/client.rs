@@ -82,6 +82,7 @@ struct ReconnectingRequest {
     props: RequestProps,
     http: ra::Client,
     state: State,
+    next_retry_secs: u64,
 }
 
 enum State {
@@ -120,6 +121,7 @@ impl ReconnectingRequest {
             props,
             http,
             state: State::New,
+            next_retry_secs: 1,
         }
     }
 }
@@ -132,6 +134,21 @@ impl ReconnectingRequest {
             .headers(self.props.headers.clone());
         request.send().map_err(|e| Error::HttpRequest(Box::new(e)))
     }
+
+    fn backoff(&mut self) -> u64 {
+        let secs = self.next_retry_secs;
+        self.next_retry_secs *= 2;
+        secs
+    }
+
+    fn reset_backoff(&mut self) {
+        self.next_retry_secs = 1;
+    }
+}
+
+fn delay_secs(secs: u64, description: &str) -> Delay {
+    info!("Waiting {}s before {}", secs, description);
+    Delay::new(Instant::now() + Duration::from_secs(secs))
 }
 
 impl Stream for ReconnectingRequest {
@@ -163,8 +180,9 @@ impl Stream for ReconnectingRequest {
                         Err(e) => {
                             warn!("request returned an error: {:?}", e);
                             if retry {
-                                self.state = State::WaitingToReconnect(Delay::new(
-                                    Instant::now() + Duration::from_secs(1),
+                                self.state = State::WaitingToReconnect(delay_secs(
+                                    self.backoff(),
+                                    "retrying",
                                 ));
                                 continue;
                             } else {
@@ -175,24 +193,26 @@ impl Stream for ReconnectingRequest {
                     debug!("HTTP response: {:#?}", resp);
 
                     match resp.error_for_status() {
-                        Ok(resp) => State::Connected(
-                            resp.into_body().map_err(|e| Error::HttpStream(Box::new(e))),
-                        ),
+                        Ok(resp) => {
+                            self.reset_backoff();
+                            State::Connected(
+                                resp.into_body().map_err(|e| Error::HttpStream(Box::new(e))),
+                            )
+                        }
                         Err(e) => return Err(Error::HttpRequest(Box::new(e))),
                     }
                 }
                 State::Connected(ref mut chunks) => match chunks.poll() {
-                    Ok(result) => return Ok(result),
+                    Ok(result) => {
+                        return Ok(result);
+                    }
                     Err(e) => {
                         warn!("chunk stream returned an error: {:?}", e);
-                        State::WaitingToReconnect(Delay::new(
-                            Instant::now() + Duration::from_secs(1),
-                        ))
+                        State::WaitingToReconnect(delay_secs(self.backoff(), "reconnecting"))
                     }
                 },
                 State::WaitingToReconnect(ref mut delay) => {
                     try_ready!(delay.poll().map_err(|_| panic!("TODO")));
-                    // TODO backoff
                     info!("Reconnecting");
                     let resp = self.send_request();
                     State::Connecting {
