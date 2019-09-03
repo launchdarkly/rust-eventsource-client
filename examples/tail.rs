@@ -1,4 +1,4 @@
-use std::{env, process};
+use std::{env, process, time::Duration};
 
 use futures::{future::Future, lazy, stream::Stream};
 
@@ -17,6 +17,14 @@ fn main() -> Result<(), es::Error> {
 
     let client = es::Client::for_url(url)?
         .header("Authorization", auth_header)?
+        .reconnect(
+            es::ReconnectOptions::reconnect(true)
+                .retry_initial(false)
+                .delay(Duration::from_secs(1))
+                .backoff_factor(2)
+                .delay_max(Duration::from_secs(60))
+                .build(),
+        )
         .build();
     tokio::run(lazy(|| tail_events(client)));
     Ok(())

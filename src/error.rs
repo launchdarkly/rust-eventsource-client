@@ -12,6 +12,8 @@ pub enum Error {
     InvalidLine(String),
     /// Encountered an event type that is not a valid UTF-8 byte sequence.
     InvalidEventType(std::str::Utf8Error),
+    /// An unexpected failure occurred.
+    Unexpected(Box<std::error::Error + Send + 'static>),
 }
 
 impl PartialEq<Error> for Error {
@@ -38,8 +40,18 @@ impl Error {
         match self {
             Error::HttpRequest(err) => Some(err.as_ref()),
             Error::HttpStream(err) => Some(err.as_ref()),
+            Error::Unexpected(err) => Some(err.as_ref()),
             _ => None,
         }
+    }
+}
+
+impl<E> From<E> for Error
+where
+    E: std::error::Error + Send + 'static,
+{
+    fn from(e: E) -> Error {
+        Error::Unexpected(Box::new(e))
     }
 }
 

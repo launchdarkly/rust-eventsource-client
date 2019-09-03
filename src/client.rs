@@ -13,12 +13,77 @@ use super::error::{Error, Result};
 
 /*
  * TODO remove debug output
- * TODO reconnect
+ * TODO move ReconnectOptions to config.rs?
+ * TODO doc reconnect
  */
+
+#[derive(Clone, Debug)]
+pub struct ReconnectOptions {
+    retry_initial: bool,
+    reconnect: bool,
+    delay: Duration,
+    backoff_factor: u32,
+    delay_max: Duration,
+}
+
+impl ReconnectOptions {
+    pub fn reconnect(reconnect: bool) -> ReconnectOptionsBuilder {
+        ReconnectOptionsBuilder::new(reconnect)
+    }
+}
+
+impl Default for ReconnectOptions {
+    fn default() -> ReconnectOptions {
+        ReconnectOptions {
+            retry_initial: false,
+            reconnect: true,
+            delay: Duration::from_secs(1),
+            backoff_factor: 2,
+            delay_max: Duration::from_secs(60),
+        }
+    }
+}
+
+pub struct ReconnectOptionsBuilder {
+    opts: ReconnectOptions,
+}
+
+impl ReconnectOptionsBuilder {
+    pub fn new(reconnect: bool) -> Self {
+        let mut opts = ReconnectOptions::default();
+        opts.reconnect = reconnect;
+        Self { opts }
+    }
+
+    pub fn retry_initial(mut self, retry: bool) -> Self {
+        self.opts.retry_initial = retry;
+        self
+    }
+
+    pub fn delay(mut self, delay: Duration) -> Self {
+        self.opts.delay = delay;
+        self
+    }
+
+    pub fn backoff_factor(mut self, factor: u32) -> Self {
+        self.opts.backoff_factor = factor;
+        self
+    }
+
+    pub fn delay_max(mut self, max: Duration) -> Self {
+        self.opts.delay_max = max;
+        self
+    }
+
+    pub fn build(self) -> ReconnectOptions {
+        self.opts
+    }
+}
 
 pub struct ClientBuilder {
     url: r::Url,
     headers: r::header::HeaderMap,
+    reconnect_opts: ReconnectOptions,
 }
 
 impl ClientBuilder {
@@ -29,11 +94,17 @@ impl ClientBuilder {
         Ok(self)
     }
 
+    pub fn reconnect(mut self, opts: ReconnectOptions) -> ClientBuilder {
+        self.reconnect_opts = opts;
+        self
+    }
+
     pub fn build(self) -> Client {
         Client {
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
+                reconnect_opts: self.reconnect_opts,
             },
         }
     }
@@ -43,6 +114,7 @@ impl ClientBuilder {
 struct RequestProps {
     url: r::Url,
     headers: r::header::HeaderMap,
+    reconnect_opts: ReconnectOptions,
 }
 
 /// Client that connects to a server using the Server-Sent Events protocol
@@ -62,6 +134,7 @@ impl Client {
         Ok(ClientBuilder {
             url: url,
             headers: r::header::HeaderMap::new(),
+            reconnect_opts: ReconnectOptions::default(),
         })
     }
 
@@ -75,6 +148,10 @@ impl Client {
             self.request_props.clone(),
         )))
     }
+
+    pub fn reconnect_opts(&self) -> &ReconnectOptions {
+        &self.request_props.reconnect_opts
+    }
 }
 
 #[must_use = "streams do nothing unless polled"]
@@ -82,7 +159,7 @@ struct ReconnectingRequest {
     props: RequestProps,
     http: ra::Client,
     state: State,
-    next_retry_secs: u64,
+    next_reconnect_delay: Duration,
 }
 
 enum State {
@@ -117,11 +194,12 @@ impl Debug for State {
 impl ReconnectingRequest {
     fn new(props: RequestProps) -> ReconnectingRequest {
         let http = ra::Client::new();
+        let reconnect_delay = props.reconnect_opts.delay;
         ReconnectingRequest {
             props,
             http,
             state: State::New,
-            next_retry_secs: 1,
+            next_reconnect_delay: reconnect_delay,
         }
     }
 }
@@ -135,20 +213,23 @@ impl ReconnectingRequest {
         request.send().map_err(|e| Error::HttpRequest(Box::new(e)))
     }
 
-    fn backoff(&mut self) -> u64 {
-        let secs = self.next_retry_secs;
-        self.next_retry_secs *= 2;
-        secs
+    fn backoff(&mut self) -> Duration {
+        let delay = self.next_reconnect_delay;
+        self.next_reconnect_delay = std::cmp::min(
+            self.props.reconnect_opts.delay_max,
+            self.next_reconnect_delay * self.props.reconnect_opts.backoff_factor,
+        );
+        delay
     }
 
     fn reset_backoff(&mut self) {
-        self.next_retry_secs = 1;
+        self.next_reconnect_delay = self.props.reconnect_opts.delay;
     }
 }
 
-fn delay_secs(secs: u64, description: &str) -> Delay {
-    info!("Waiting {}s before {}", secs, description);
-    Delay::new(Instant::now() + Duration::from_secs(secs))
+fn delay(dur: Duration, description: &str) -> Delay {
+    info!("Waiting {:?} before {}", dur, description);
+    Delay::new(Instant::now() + dur)
 }
 
 impl Stream for ReconnectingRequest {
@@ -166,7 +247,7 @@ impl Stream for ReconnectingRequest {
                 State::New => {
                     let resp = self.send_request();
                     State::Connecting {
-                        retry: false,
+                        retry: self.props.reconnect_opts.retry_initial,
                         resp: Box::new(resp),
                     }
                 }
@@ -180,10 +261,8 @@ impl Stream for ReconnectingRequest {
                         Err(e) => {
                             warn!("request returned an error: {:?}", e);
                             if retry {
-                                self.state = State::WaitingToReconnect(delay_secs(
-                                    self.backoff(),
-                                    "retrying",
-                                ));
+                                self.state =
+                                    State::WaitingToReconnect(delay(self.backoff(), "retrying"));
                                 continue;
                             } else {
                                 return Err(e);
@@ -208,11 +287,15 @@ impl Stream for ReconnectingRequest {
                     }
                     Err(e) => {
                         warn!("chunk stream returned an error: {:?}", e);
-                        State::WaitingToReconnect(delay_secs(self.backoff(), "reconnecting"))
+                        if self.props.reconnect_opts.reconnect {
+                            State::WaitingToReconnect(delay(self.backoff(), "reconnecting"))
+                        } else {
+                            return Err(e);
+                        }
                     }
                 },
                 State::WaitingToReconnect(ref mut delay) => {
-                    try_ready!(delay.poll().map_err(|_| panic!("TODO")));
+                    try_ready!(delay.poll());
                     info!("Reconnecting");
                     let resp = self.send_request();
                     State::Connecting {
