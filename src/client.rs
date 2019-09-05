@@ -148,10 +148,6 @@ impl Client {
             self.request_props.clone(),
         )))
     }
-
-    pub fn reconnect_opts(&self) -> &ReconnectOptions {
-        &self.request_props.reconnect_opts
-    }
 }
 
 #[must_use = "streams do nothing unless polled"]
