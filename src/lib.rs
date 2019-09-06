@@ -35,10 +35,12 @@ extern crate log;
 extern crate maplit;
 
 mod client;
+mod config;
 mod decode;
 mod error;
 
 pub use client::*;
+pub use config::*;
 pub use decode::{Event, EventStream};
 pub use error::*;
 
