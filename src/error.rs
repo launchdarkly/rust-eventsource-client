@@ -2,9 +2,9 @@
 #[derive(Debug)]
 pub enum Error {
     /// The HTTP request failed.
-    HttpRequest(Box<std::error::Error + Send + 'static>),
+    HttpRequest(Box<dyn std::error::Error + Send + 'static>),
     /// An error reading from the HTTP response body.
-    HttpStream(Box<std::error::Error + Send + 'static>),
+    HttpStream(Box<dyn std::error::Error + Send + 'static>),
     /// The HTTP response stream ended unexpectedly (e.g. in the
     /// middle of an event).
     UnexpectedEof,
@@ -13,7 +13,7 @@ pub enum Error {
     /// Encountered an event type that is not a valid UTF-8 byte sequence.
     InvalidEventType(std::str::Utf8Error),
     /// An unexpected failure occurred.
-    Unexpected(Box<std::error::Error + Send + 'static>),
+    Unexpected(Box<dyn std::error::Error + Send + 'static>),
 }
 
 impl PartialEq<Error> for Error {

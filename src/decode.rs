@@ -7,7 +7,7 @@ use reqwest::r#async as ra;
 
 use super::error::{Error, Result};
 
-pub type EventStream = Box<Stream<Item = Event, Error = Error> + Send>;
+pub type EventStream = Box<dyn Stream<Item = Event, Error = Error> + Send>;
 
 #[derive(Clone, Debug, PartialEq)]
 // TODO can we make this require less copying?
