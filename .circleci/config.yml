@@ -20,7 +20,7 @@ jobs:
       - run: cargo build
       - run: cargo test
       - run: cargo doc --no-deps
-      - run: cargo clippy
+      - run: cargo clippy -- -D warnings
 
       - store_artifacts:
           path: target/doc
