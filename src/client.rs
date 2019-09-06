@@ -6,7 +6,7 @@ use futures::stream::{MapErr, Stream};
 use futures::{Async, Poll};
 use reqwest as r;
 use reqwest::{r#async as ra, Url};
-use tokio::timer::Delay;
+use tokio_timer::Delay;
 
 use super::config::ReconnectOptions;
 use super::decode::{Decoded, EventStream};

@@ -14,8 +14,9 @@ exclude = [
 futures = "0.1.25"
 log = "0.4.6"
 reqwest = "0.9.11"
-tokio = "0.1.16"
+tokio-timer = "0.2.11"
 
 [dev-dependencies]
 maplit = "1.0.1"
 simplelog = "0.5.3"
+tokio = "0.1.16"
