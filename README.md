@@ -37,11 +37,8 @@ working code.)
 * tokio-based streaming client.
 * Supports setting custom headers on the HTTP request (e.g. for endpoints
   requiring authorization).
-
-### Not yet implemented
-
 * Retry for failed connections.
-* Reconnection if connection is interrupted.
+* Reconnection if connection is interrupted, with exponential backoff.
 
 ## Stability
 
