@@ -25,7 +25,7 @@ impl Event {
     }
 
     pub fn field(&self, name: &str) -> Option<&[u8]> {
-        self.fields.get(name.into()).map(|buf| buf.as_slice())
+        self.fields.get(name).map(|buf| buf.as_slice())
     }
 
     fn set_field(&mut self, name: &str, value: &[u8]) {
@@ -37,7 +37,7 @@ impl std::ops::Index<&str> for Event {
     type Output = [u8];
 
     fn index(&self, name: &str) -> &[u8] {
-        &self.fields[name.into()]
+        &self.fields[name]
     }
 }
 
@@ -87,11 +87,11 @@ pub struct Decoded<S> {
 
 impl<S: Stream> Decoded<S> {
     pub fn new(s: S) -> Decoded<S> {
-        return Decoded {
+        Decoded {
             chunk_stream: s.fuse(),
             incomplete_line: None,
             event: None,
-        };
+        }
     }
 }
 

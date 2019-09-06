@@ -73,7 +73,7 @@ impl Client {
     pub fn for_url(url: &str) -> Result<ClientBuilder> {
         let url = Url::parse(url).map_err(|e| Error::HttpRequest(Box::new(e)))?;
         Ok(ClientBuilder {
-            url: url,
+            url,
             headers: r::header::HeaderMap::new(),
             reconnect_opts: ReconnectOptions::default(),
         })
