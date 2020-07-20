@@ -365,10 +365,13 @@ mod tests {
         );
         assert_eq!(decoded.poll(), Ok(Ready(None)));
 
-        let mut decoded = Decoded::new(one_chunk(b"message:hell")
-            .chain(delay_one_then(chunk(b"o\n\nmessage:")))
-            .chain(delay_one_then(chunk(b"world\n\n"))));
+        let mut decoded = Decoded::new(
+            one_chunk(b"message:hell")
+                .chain(delay_one_then(chunk(b"o\n\nmessage:")))
+                .chain(delay_one_then(chunk(b"world\n\n"))),
+        );
 
+        assert_eq!(decoded.poll(), Ok(NotReady));
         assert_eq!(decoded.poll(), Ok(NotReady));
         assert_eq!(
             decoded.poll(),
@@ -386,8 +389,9 @@ mod tests {
         );
         assert_eq!(decoded.poll(), Ok(Ready(None)));
 
-        let mut decoded = Decoded::new(one_chunk(b"data:hello\n")
-            .chain(delay_one_then(chunk(b"data:world\n\n"))));
+        let mut decoded = Decoded::new(
+            one_chunk(b"data:hello\n").chain(delay_one_then(chunk(b"data:world\n\n"))),
+        );
 
         assert_eq!(decoded.poll(), Ok(NotReady));
         assert_eq!(
