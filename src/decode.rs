@@ -386,6 +386,19 @@ mod tests {
         );
         assert_eq!(decoded.poll(), Ok(Ready(None)));
 
+        let mut decoded = Decoded::new(one_chunk(b"data:hello\n")
+            .chain(delay_one_then(chunk(b"data:world\n\n"))));
+
+        assert_eq!(decoded.poll(), Ok(NotReady));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"data" => &b"hello\nworld"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
         let interrupted_after_event = one_chunk(b"message: hello\n\n")
             .chain(stream::poll_fn(|| Err(dummy_stream_error("read error"))));
         let mut decoded = Decoded::new(interrupted_after_event);
