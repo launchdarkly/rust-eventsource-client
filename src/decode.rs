@@ -365,6 +365,27 @@ mod tests {
         );
         assert_eq!(decoded.poll(), Ok(Ready(None)));
 
+        let mut decoded = Decoded::new(one_chunk(b"message:hell")
+            .chain(delay_one_then(chunk(b"o\n\nmessage:")))
+            .chain(delay_one_then(chunk(b"world\n\n"))));
+
+        assert_eq!(decoded.poll(), Ok(NotReady));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"world"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
         let interrupted_after_event = one_chunk(b"message: hello\n\n")
             .chain(stream::poll_fn(|| Err(dummy_stream_error("read error"))));
         let mut decoded = Decoded::new(interrupted_after_event);
