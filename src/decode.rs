@@ -117,28 +117,74 @@ where
 
             trace!("decoder got a chunk: {:?}", logify(&chunk));
 
-            match self.incomplete_line.as_mut() {
-                // TODO can we avoid these copies?
-                None => self.incomplete_line = Some(chunk.to_vec()),
-                Some(incomplete_line) => incomplete_line.extend(chunk.into_iter()),
-            }
+            // Decoding a chunk has two phases: decode the chunk into lines, and decode the lines
+            // into events.
 
-            let incomplete_line = self.incomplete_line.as_ref().unwrap();
-            let chunk = if incomplete_line.ends_with(b"\n") {
-                std::mem::replace(&mut self.incomplete_line, None).unwrap()
-            } else {
-                debug!("Chunk does not end with newline!");
-                continue;
-            };
-            // strip off final newline so that .split below doesn't yield a
-            // bogus empty string as the last "line"
-            let chunk = &chunk[..chunk.len() - 1];
+            // Phase 1: decode the chunk into lines.
 
-            let lines = chunk.split(|&b| b'\n' == b);
-            let mut seen_empty_line = false;
+            let mut complete_lines: Vec<Vec<u8>> = Vec::with_capacity(10);
+            let mut maybe_incomplete_line: Option<&[u8]> = None;
+
+            // TODO also handle lines ending in \r, \r\n (and EOF?)
+            let mut lines = chunk.split(|&b| b == b'\n');
+            // The first and last elements in this split are special. The spec requires lines to be
+            // terminated. But lines may span chunks, so:
+            //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
+            //    should be buffered as an incomplete line
+            //  * the first line should be appended to the incomplete line, if any
 
             for line in lines {
-                trace!("Decoder got a line: {}", logify(line));
+                trace!("decoder got a line: {:?}", logify(line));
+
+                if self.incomplete_line.is_some() {
+                    trace!(
+                        "completing line: {:?}",
+                        logify(self.incomplete_line.as_ref().unwrap())
+                    );
+
+                    // only the first line can hit this case, since it clears self.incomplete_line
+                    // and we don't fill it again until the end of the loop
+                    let mut incomplete_line =
+                        std::mem::replace(&mut self.incomplete_line, None).unwrap();
+                    incomplete_line.extend_from_slice(line);
+                    complete_lines.push(incomplete_line);
+                    continue;
+                }
+
+                if maybe_incomplete_line.is_some() {
+                    // we saw the next line, so the previous one must have been complete after all
+                    trace!(
+                        "previous line was complete: {:?}",
+                        logify(maybe_incomplete_line.as_ref().unwrap())
+                    );
+                    let actually_complete_line =
+                        std::mem::replace(&mut maybe_incomplete_line, Some(line)).unwrap();
+                    complete_lines.push(actually_complete_line.to_vec());
+                } else {
+                    trace!("potentially incomplete line: {:?}", logify(line));
+                    maybe_incomplete_line = Some(line);
+                }
+            }
+
+            match maybe_incomplete_line {
+                Some(b"") => trace!("last line was empty"),
+                Some(incomplete_line) => {
+                    trace!("buffering incomplete line: {:?}", logify(incomplete_line));
+                    self.incomplete_line = Some(incomplete_line.to_vec());
+                }
+                None => trace!("no last line?"), // TODO
+            }
+
+            for line in &complete_lines {
+                trace!("complete line: {:?}", logify(line));
+            }
+
+            // Phase 2: decode the lines into events.
+
+            let mut seen_empty_line = false;
+
+            for line in complete_lines {
+                trace!("Decoder got a line: {:?}", logify(&line));
 
                 if line.is_empty() {
                     trace!("empty line");
@@ -146,7 +192,7 @@ where
                     continue;
                 }
 
-                if let Some((key, value)) = parse_field(line)? {
+                if let Some((key, value)) = parse_field(&line)? {
                     if self.event.is_none() {
                         self.event = Some(Event::new());
                     }
