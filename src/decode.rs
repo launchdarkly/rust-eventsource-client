@@ -149,16 +149,16 @@ where
             //  * the first line should be appended to the incomplete line, if any
 
             for line in lines {
-                trace!("decoder got a line: {:?}", logify(line));
-
                 if self.incomplete_line.is_some() {
-                    trace!(
-                        "completing line: {:?}",
-                        logify(self.incomplete_line.as_ref().unwrap())
-                    );
-
                     // only the first line can hit this case, since it clears self.incomplete_line
                     // and we don't fill it again until the end of the loop
+
+                    trace!(
+                        "completing line from previous chunk: {:?}+{:?}",
+                        logify(self.incomplete_line.as_ref().unwrap()),
+                        logify(line)
+                    );
+
                     let mut incomplete_line =
                         std::mem::replace(&mut self.incomplete_line, None).unwrap();
                     incomplete_line.extend_from_slice(line);
@@ -182,7 +182,7 @@ where
             }
 
             match maybe_incomplete_line {
-                Some(b"") => trace!("last line was empty"),
+                Some(b"") => trace!("chunk ended with a line terminator"),
                 Some(incomplete_line) => {
                     trace!("buffering incomplete line: {:?}", logify(incomplete_line));
                     self.incomplete_line = Some(incomplete_line.to_vec());
@@ -199,8 +199,6 @@ where
             let mut seen_empty_line = false;
 
             for line in complete_lines {
-                trace!("Decoder got a line: {:?}", logify(&line));
-
                 if line.is_empty() {
                     trace!("empty line");
                     seen_empty_line = true;
