@@ -141,7 +141,7 @@ where
             let mut maybe_incomplete_line: Option<&[u8]> = None;
 
             // TODO also handle lines ending in \r, \r\n (and EOF?)
-            let mut lines = chunk.split(|&b| b == b'\n');
+            let lines = chunk.split(|&b| b == b'\n');
             // The first and last elements in this split are special. The spec requires lines to be
             // terminated. But lines may span chunks, so:
             //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
