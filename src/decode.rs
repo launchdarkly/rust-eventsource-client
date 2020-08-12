@@ -28,8 +28,23 @@ impl Event {
         self.fields.get(name).map(|buf| buf.as_slice())
     }
 
-    fn set_field(&mut self, name: &str, value: &[u8]) {
-        self.fields.insert(name.into(), value.to_owned());
+    // Set the named field to the given value, or append to any existing value, as required by the
+    // spec. Will append a newline each time.
+    fn append_field(&mut self, name: &str, value: &[u8]) {
+        let existing = match self.fields.get_mut(name) {
+            None => {
+                let empty = Vec::with_capacity(value.len() + 1);
+                self.fields.insert(name.into(), empty);
+                self.fields.get_mut(name).unwrap()
+            }
+            Some(nonempty) => {
+                nonempty.reserve(value.len() + 1);
+                nonempty
+            }
+        };
+
+        existing.extend(value);
+        existing.push(b'\n');
     }
 }
 
@@ -204,7 +219,7 @@ where
                             .map_err(Error::InvalidEventType)?
                             .to_string();
                     } else {
-                        event.set_field(key, value);
+                        event.append_field(key, value);
                     }
                 }
             }
@@ -297,7 +312,7 @@ mod tests {
         let mut evt = Event::new();
         evt.event_type = typ.to_string();
         for (k, v) in fields {
-            evt.set_field(k, v);
+            evt.append_field(k, v);
         }
         evt
     }
