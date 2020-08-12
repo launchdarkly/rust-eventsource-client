@@ -411,13 +411,8 @@ mod tests {
         );
         assert_eq!(decoded.poll(), Ok(Ready(None)));
 
-        let mut decoded = Decoded::new(
-            one_chunk(b"message:hell")
-                .chain(delay_one_then(chunk(b"o\n\nmessage:")))
-                .chain(delay_one_then(chunk(b"world\n\n"))),
-        );
-
-        assert_eq!(decoded.poll(), Ok(NotReady));
+        let mut decoded =
+            Decoded::new(one_chunk(b"message:hell").chain(delay_one_then(chunk(b"o\n\n"))));
         assert_eq!(decoded.poll(), Ok(NotReady));
         assert_eq!(
             decoded.poll(),
@@ -426,6 +421,23 @@ mod tests {
                 &btreemap! {"message" => &b"hello"[..]}
             ))))
         );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded = Decoded::new(
+            one_chunk(b"message:hell")
+                .chain(delay_one_then(chunk(b"o\n\nmessage:")))
+                .chain(delay_one_then(chunk(b"world\n\n"))),
+        );
+
+        assert_eq!(decoded.poll(), Ok(NotReady));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(NotReady));
         assert_eq!(
             decoded.poll(),
             Ok(Ready(Some(event(
