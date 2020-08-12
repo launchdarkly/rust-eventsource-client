@@ -138,7 +138,7 @@ where
             // Phase 1: decode the chunk into lines.
 
             let mut complete_lines: Vec<Vec<u8>> = Vec::with_capacity(10);
-            let mut maybe_incomplete_line: Option<&[u8]> = None;
+            let mut maybe_incomplete_line: Option<Vec<u8>> = None;
 
             // TODO also handle lines ending in \r, \r\n (and EOF?)
             let lines = chunk.split(|&b| b == b'\n');
@@ -162,7 +162,8 @@ where
                     let mut incomplete_line =
                         std::mem::replace(&mut self.incomplete_line, None).unwrap();
                     incomplete_line.extend_from_slice(line);
-                    complete_lines.push(incomplete_line);
+
+                    maybe_incomplete_line = Some(incomplete_line); // safe to clobber since this is the first line
                     continue;
                 }
 
@@ -173,21 +174,21 @@ where
                         logify(maybe_incomplete_line.as_ref().unwrap())
                     );
                     let actually_complete_line =
-                        std::mem::replace(&mut maybe_incomplete_line, Some(line)).unwrap();
-                    complete_lines.push(actually_complete_line.to_vec());
+                        std::mem::replace(&mut maybe_incomplete_line, Some(line.to_vec())).unwrap();
+                    complete_lines.push(actually_complete_line);
                 } else {
                     trace!("potentially incomplete line: {:?}", logify(line));
-                    maybe_incomplete_line = Some(line);
+                    maybe_incomplete_line = Some(line.to_vec());
                 }
             }
 
             match maybe_incomplete_line {
-                Some(b"") => trace!("chunk ended with a line terminator"),
+                Some(l) if l.is_empty() => trace!("chunk ended with a line terminator"),
                 Some(incomplete_line) => {
-                    trace!("buffering incomplete line: {:?}", logify(incomplete_line));
-                    self.incomplete_line = Some(incomplete_line.to_vec());
+                    trace!("buffering incomplete line: {:?}", logify(&incomplete_line));
+                    self.incomplete_line = Some(incomplete_line);
                 }
-                None => trace!("no last line?"), // TODO
+                None => unreachable!(), // we always set it after processing a line, and we always have at least one line
             }
 
             for line in &complete_lines {
@@ -337,6 +338,36 @@ mod tests {
 
     fn delay_one_then<T, E>(t: T) -> impl Stream<Item = T, Error = E> {
         delay_one_poll().chain(stream::once(Ok(t)))
+    }
+
+    #[test]
+    fn test_decode_incomplete_chunks() {
+        let one_empty = one_chunk(b"");
+        assert_eq!(Decoded::new(one_empty).poll(), Ok(Ready(None)));
+
+        let empty_after_incomplete = one_chunk(b"message:foo")
+            .chain(one_chunk(b""))
+            .chain(one_chunk(b"baz\n\n"));
+        let mut decoded = Decoded::new(empty_after_incomplete);
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"foobaz"[..]}
+            ))))
+        );
+
+        let incomplete_after_incomplete = one_chunk(b"message:foo")
+            .chain(one_chunk(b"bar"))
+            .chain(one_chunk(b"baz\n\n"));
+        let mut decoded = Decoded::new(incomplete_after_incomplete);
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"foobarbaz"[..]}
+            ))))
+        );
     }
 
     #[test]
