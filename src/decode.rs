@@ -79,11 +79,12 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
             let key = &line[0..colon_pos];
             let key = from_utf8(key)
                 .map_err(|e| Error::InvalidLine(format!("malformed key: {:?}", e)))?;
-            let value = &line[colon_pos + 1..];
-            let value = match value.iter().position(|&b| !b.is_ascii_whitespace()) {
-                Some(start) => &value[start..],
-                None => b"",
-            };
+
+            let mut value = &line[colon_pos + 1..];
+            // remove the first initial space character if any (but remove no other whitespace)
+            if value.starts_with(b" ") {
+                value = &value[1..];
+            }
 
             debug!("key: {}, value: {}", key, logify(value));
 
@@ -279,9 +280,14 @@ mod tests {
     fn test_parse_field_valid() {
         assert_eq!(parse_field(b"event:foo"), field("event", b"foo"));
         assert_eq!(parse_field(b"event: foo"), field("event", b"foo"));
-        assert_eq!(parse_field(b"event:  foo"), field("event", b"foo"));
-        assert_eq!(parse_field(b"event:\tfoo"), field("event", b"foo"));
+        assert_eq!(parse_field(b"event:  foo"), field("event", b" foo"));
+        assert_eq!(parse_field(b"event:\tfoo"), field("event", b"\tfoo"));
         assert_eq!(parse_field(b"event: foo "), field("event", b"foo "));
+
+        assert_eq!(parse_field(b"disconnect:"), field("disconnect", b""));
+        assert_eq!(parse_field(b"disconnect: "), field("disconnect", b""));
+        assert_eq!(parse_field(b"disconnect:  "), field("disconnect", b" "));
+        assert_eq!(parse_field(b"disconnect:\t"), field("disconnect", b"\t"));
 
         assert_eq!(parse_field(b" : foo"), field(" ", b"foo"));
         assert_eq!(parse_field(b"\xe2\x98\x83: foo"), field("☃", b"foo"));
