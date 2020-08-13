@@ -137,9 +137,6 @@ where
 
             // Phase 1: decode the chunk into lines.
 
-            let mut complete_lines: Vec<Vec<u8>> = Vec::with_capacity(10);
-            let mut maybe_incomplete_line: Option<Vec<u8>> = None;
-
             // TODO also handle lines ending in \r, \r\n (and EOF?)
             let lines = chunk.split(|&b| b == b'\n');
             // The first and last elements in this split are special. The spec requires lines to be
@@ -147,6 +144,9 @@ where
             //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
             //    should be buffered as an incomplete line
             //  * the first line should be appended to the incomplete line, if any
+
+            let mut complete_lines: Vec<Vec<u8>> = Vec::with_capacity(10);
+            let mut maybe_incomplete_line: Option<Vec<u8>> = None;
 
             for line in lines {
                 if let Some(incomplete_line) = &mut self.incomplete_line {
