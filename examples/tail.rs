@@ -5,6 +5,8 @@ use futures::{future::Future, lazy, stream::Stream};
 use eventsource_client as es;
 
 fn main() -> Result<(), es::Error> {
+    env_logger::init();
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 3 {
