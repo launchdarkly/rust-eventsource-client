@@ -149,13 +149,13 @@ where
             //  * the first line should be appended to the incomplete line, if any
 
             for line in lines {
-                if self.incomplete_line.is_some() {
+                if let Some(incomplete_line) = &mut self.incomplete_line {
                     // only the first line can hit this case, since it clears self.incomplete_line
                     // and we don't fill it again until the end of the loop
 
                     trace!(
                         "completing line from previous chunk: {:?}+{:?}",
-                        logify(self.incomplete_line.as_ref().unwrap()),
+                        logify(&incomplete_line),
                         logify(line)
                     );
 
@@ -167,18 +167,21 @@ where
                     continue;
                 }
 
-                if maybe_incomplete_line.is_some() {
-                    // we saw the next line, so the previous one must have been complete after all
-                    trace!(
-                        "previous line was complete: {:?}",
-                        logify(maybe_incomplete_line.as_ref().unwrap())
-                    );
-                    let actually_complete_line =
-                        std::mem::replace(&mut maybe_incomplete_line, Some(line.to_vec())).unwrap();
-                    complete_lines.push(actually_complete_line);
-                } else {
-                    trace!("potentially incomplete line: {:?}", logify(line));
-                    maybe_incomplete_line = Some(line.to_vec());
+                match &mut maybe_incomplete_line {
+                    None => {
+                        trace!("potentially incomplete line: {:?}", logify(line));
+                        maybe_incomplete_line = Some(line.to_vec());
+                    }
+                    Some(actually_complete_line) => {
+                        // we saw the next line, so the previous one must have been complete after all
+                        trace!(
+                            "previous line was complete: {:?}",
+                            logify(actually_complete_line)
+                        );
+                        let actually_complete_line =
+                            std::mem::replace(actually_complete_line, line.to_vec());
+                        complete_lines.push(actually_complete_line);
+                    }
                 }
             }
 
