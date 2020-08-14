@@ -67,6 +67,12 @@ fn logify(bytes: &[u8]) -> &str {
 }
 
 fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
+    if line.is_empty() {
+        return Err(Error::InvalidLine(
+            "should never try to parse an empty line (probably a bug)".into(),
+        ));
+    }
+
     match line.iter().position(|&b| b':' == b) {
         Some(0) => {
             debug!(
@@ -77,8 +83,7 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
         }
         Some(colon_pos) => {
             let key = &line[0..colon_pos];
-            let key = from_utf8(key)
-                .map_err(|e| Error::InvalidLine(format!("malformed key: {:?}", e)))?;
+            let key = parse_key(key)?;
 
             let mut value = &line[colon_pos + 1..];
             // remove the first initial space character if any (but remove no other whitespace)
@@ -90,8 +95,12 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
 
             Ok(Some((key, value)))
         }
-        None => Err(Error::InvalidLine("line missing ':' byte".to_string())),
+        None => Ok(Some((parse_key(line)?, b""))),
     }
+}
+
+fn parse_key(key: &[u8]) -> Result<&str> {
+    from_utf8(key).map_err(|e| Error::InvalidLine(format!("malformed key: {:?}", e)))
 }
 
 #[must_use = "streams do nothing unless polled"]
@@ -249,19 +258,13 @@ where
 mod tests {
     use super::{Error::*, *};
 
-    fn invalid(msg: &str) -> Error {
-        InvalidLine(msg.to_string())
-    }
-
     fn field<'a>(key: &'a str, value: &'a [u8]) -> Result<Option<(&'a str, &'a [u8])>> {
         Ok(Some((key, value)))
     }
 
     #[test]
     fn test_parse_field_invalid() {
-        assert_eq!(parse_field(b""), Err(invalid("line missing ':' byte")));
-
-        assert_eq!(parse_field(b"event"), Err(invalid("line missing ':' byte")));
+        assert!(parse_field(b"").is_err());
 
         match parse_field(b"\x80: invalid UTF-8") {
             Err(InvalidLine(msg)) => assert!(msg.contains("Utf8Error")),
@@ -288,6 +291,8 @@ mod tests {
         assert_eq!(parse_field(b"disconnect: "), field("disconnect", b""));
         assert_eq!(parse_field(b"disconnect:  "), field("disconnect", b" "));
         assert_eq!(parse_field(b"disconnect:\t"), field("disconnect", b"\t"));
+
+        assert_eq!(parse_field(b"disconnect"), field("disconnect", b""));
 
         assert_eq!(parse_field(b" : foo"), field(" ", b"foo"));
         assert_eq!(parse_field(b"\xe2\x98\x83: foo"), field("☃", b"foo"));
