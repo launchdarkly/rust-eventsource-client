@@ -355,10 +355,97 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_incomplete_chunks() {
-        let one_empty = one_chunk(b"");
-        assert_eq!(Decoded::new(one_empty).poll(), Ok(Ready(None)));
+    fn test_decode_chunks_simple() {
+        let mut decoded = Decoded::new(one_chunk(b"message: hello\n\n"));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
 
+        let mut decoded = Decoded::new(one_chunk(b"event: test\n\n"));
+        assert_eq!(decoded.poll(), Ok(Ready(Some(event("test", &Map::new())))));
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded = Decoded::new(one_chunk(b"event: test\nmessage: hello\nto: world\n\n"));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "test",
+                &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        assert_eq!(
+            Decoded::new(one_chunk(b":hello\n")).poll(),
+            Ok(Ready(None)),
+            "comments are ignored"
+        );
+    }
+
+    #[test]
+    fn test_decode_message_split_across_chunks() {
+        let mut decoded = Decoded::new(one_chunk(b"message:").chain(one_chunk(b"hello\n\n")));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded = Decoded::new(one_chunk(b"message:hell").chain(one_chunk(b"o\n\n")));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded =
+            Decoded::new(one_chunk(b"message:").chain(delay_one_then(chunk(b"hello\n\n"))));
+        assert_eq!(decoded.poll(), Ok(NotReady));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+
+        let mut decoded = Decoded::new(
+            one_chunk(b"message:hell")
+                .chain(one_chunk(b"o\n\nmessage:"))
+                .chain(one_chunk(b"world\n\n")),
+        );
+
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"hello"[..]}
+            ))))
+        );
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"message" => &b"world"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+    }
+
+    #[test]
+    fn test_decode_line_split_across_chunks() {
         let empty_after_incomplete = one_chunk(b"message:foo")
             .chain(one_chunk(b""))
             .chain(one_chunk(b"baz\n\n"));
@@ -385,14 +472,31 @@ mod tests {
     }
 
     #[test]
-    fn test_decod() {
+    fn test_decode_concatenates_multiple_values_for_same_field() {
+        let mut decoded = Decoded::new(
+            one_chunk(b"data:hello\n").chain(delay_one_then(chunk(b"data:world\n\n"))),
+        );
+
+        assert_eq!(decoded.poll(), Ok(NotReady));
+        assert_eq!(
+            decoded.poll(),
+            Ok(Ready(Some(event(
+                "",
+                &btreemap! {"data" => &b"hello\nworld"[..]}
+            ))))
+        );
+        assert_eq!(decoded.poll(), Ok(Ready(None)));
+    }
+
+    #[test]
+    fn test_decode_edge_cases() {
         let empty = stream::empty::<ra::Chunk, Error>();
         assert_eq!(Decoded::new(empty).poll(), Ok(Ready(None)));
 
-        assert_eq!(Decoded::new(one_chunk(b":hello\n")).poll(), Ok(Ready(None)));
+        let one_empty = one_chunk(b"");
+        assert_eq!(Decoded::new(one_empty).poll(), Ok(Ready(None)));
 
-        let one_comment_unterminated =
-            futures::stream::once::<ra::Chunk, Error>(Ok(chunk(b":hello")));
+        let one_comment_unterminated = one_chunk(b":hello");
         let mut decoded = Decoded::new(one_comment_unterminated);
         assert_eq!(decoded.poll(), Err(UnexpectedEof));
 
@@ -422,102 +526,6 @@ mod tests {
             }
             res => panic!("expected HttpStream error, got {:?}", res),
         }
-
-        let mut decoded = Decoded::new(one_chunk(b"message: hello\n\n"));
-        assert_eq!(
-            decoded.poll(),
-            Ok(Ready(Some(event(
-                "",
-                &btreemap! {"message" => &b"hello"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll(), Ok(Ready(None)));
-
-        let mut decoded = Decoded::new(one_chunk(b"event: test\n\n"));
-        assert_eq!(decoded.poll(), Ok(Ready(Some(event("test", &Map::new())))));
-        assert_eq!(decoded.poll(), Ok(Ready(None)));
-
-        let mut decoded = Decoded::new(one_chunk(b"event: test\nmessage: hello\nto: world\n\n"));
-        assert_eq!(
-            decoded.poll(),
-            Ok(Ready(Some(event(
-                "test",
-                &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll(), Ok(Ready(None)));
-
-        let mut decoded = Decoded::new(one_chunk(b"message:").chain(one_chunk(b"hello\n\n")));
-        assert_eq!(
-            decoded.poll(),
-            Ok(Ready(Some(event(
-                "",
-                &btreemap! {"message" => &b"hello"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll(), Ok(Ready(None)));
-
-        let mut decoded =
-            Decoded::new(one_chunk(b"message:").chain(delay_one_then(chunk(b"hello\n\n"))));
-        assert_eq!(decoded.poll(), Ok(NotReady));
-        assert_eq!(
-            decoded.poll(),
-            Ok(Ready(Some(event(
-                "",
-                &btreemap! {"message" => &b"hello"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll(), Ok(Ready(None)));
-
-        let mut decoded =
-            Decoded::new(one_chunk(b"message:hell").chain(delay_one_then(chunk(b"o\n\n"))));
-        assert_eq!(decoded.poll(), Ok(NotReady));
-        assert_eq!(
-            decoded.poll(),
-            Ok(Ready(Some(event(
-                "",
-                &btreemap! {"message" => &b"hello"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll(), Ok(Ready(None)));
-
-        let mut decoded = Decoded::new(
-            one_chunk(b"message:hell")
-                .chain(delay_one_then(chunk(b"o\n\nmessage:")))
-                .chain(delay_one_then(chunk(b"world\n\n"))),
-        );
-
-        assert_eq!(decoded.poll(), Ok(NotReady));
-        assert_eq!(
-            decoded.poll(),
-            Ok(Ready(Some(event(
-                "",
-                &btreemap! {"message" => &b"hello"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll(), Ok(NotReady));
-        assert_eq!(
-            decoded.poll(),
-            Ok(Ready(Some(event(
-                "",
-                &btreemap! {"message" => &b"world"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll(), Ok(Ready(None)));
-
-        let mut decoded = Decoded::new(
-            one_chunk(b"data:hello\n").chain(delay_one_then(chunk(b"data:world\n\n"))),
-        );
-
-        assert_eq!(decoded.poll(), Ok(NotReady));
-        assert_eq!(
-            decoded.poll(),
-            Ok(Ready(Some(event(
-                "",
-                &btreemap! {"data" => &b"hello\nworld"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll(), Ok(Ready(None)));
 
         let interrupted_after_event = one_chunk(b"message: hello\n\n")
             .chain(stream::poll_fn(|| Err(dummy_stream_error("read error"))));
