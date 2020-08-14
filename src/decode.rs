@@ -147,7 +147,7 @@ where
 
             // Phase 1: decode the chunk into lines.
 
-            // TODO also handle lines ending in \r, \r\n (and EOF?)
+            // TODO(ch86257) also handle lines ending in \r, \r\n (and EOF?)
             let lines = chunk.split(|&b| b == b'\n');
             // The first and last elements in this split are special. The spec requires lines to be
             // terminated. But lines may span chunks, so:
