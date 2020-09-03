@@ -43,11 +43,3 @@ pub use client::*;
 pub use config::*;
 pub use decode::{Event, EventStream};
 pub use error::*;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
