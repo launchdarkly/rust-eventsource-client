@@ -1,4 +1,5 @@
 use std::collections::BTreeMap as Map;
+use std::collections::VecDeque;
 use std::str::from_utf8;
 
 use futures::stream::{Fuse, Stream};
@@ -106,6 +107,7 @@ fn parse_key(key: &[u8]) -> Result<&str> {
 #[must_use = "streams do nothing unless polled"]
 pub struct Decoded<S> {
     chunk_stream: Fuse<S>,
+    complete_lines: VecDeque<Vec<u8>>,
     incomplete_line: Option<Vec<u8>>,
     event: Option<Event>,
 }
@@ -114,6 +116,7 @@ impl<S: Stream> Decoded<S> {
     pub fn new(s: S) -> Decoded<S> {
         Decoded {
             chunk_stream: s.fuse(),
+            complete_lines: VecDeque::with_capacity(10),
             incomplete_line: None,
             event: None,
         }
@@ -132,6 +135,53 @@ where
         trace!("Decoded::poll");
 
         loop {
+            // TODO this comment no longer makes any sense
+            // TODO decompose this loop into functions
+
+            // Phase 2: decode the lines into events.
+
+            let mut seen_empty_line = false;
+
+            while let Some(line) = self.complete_lines.pop_front() {
+                if line.is_empty() {
+                    trace!("empty line");
+                    seen_empty_line = true;
+                    break;
+                    // TODO is there an overlap between self.event and self.complete_lines?
+                }
+
+                if let Some((key, value)) = parse_field(&line)? {
+                    if self.event.is_none() {
+                        self.event = Some(Event::new());
+                    }
+
+                    let mut event = self.event.as_mut().unwrap();
+
+                    if key == "event" {
+                        event.event_type = from_utf8(value)
+                            .map_err(Error::InvalidEventType)?
+                            .to_string();
+                    } else {
+                        event.append_field(key, value);
+                    }
+                }
+            }
+
+            trace!(
+                "seen empty line: {} (event is {:?})",
+                seen_empty_line,
+                self.event.as_ref().map(|event| &event.event_type)
+            );
+
+            match (seen_empty_line, &self.event) {
+                (_, None) => (),
+                (true, Some(_)) => {
+                    let event = std::mem::replace(&mut self.event, None);
+                    return Ok(Async::Ready(event));
+                }
+                (false, Some(_)) => debug!("Haven't seen an empty line in this whole chunk, weird"),
+            }
+
             let chunk = match try_ready!(self.chunk_stream.poll()) {
                 Some(c) => c,
                 None => match self.incomplete_line {
@@ -155,7 +205,6 @@ where
             //    should be buffered as an incomplete line
             //  * the first line should be appended to the incomplete line, if any
 
-            let mut complete_lines: Vec<Vec<u8>> = Vec::with_capacity(10);
             let mut maybe_incomplete_line: Option<Vec<u8>> = None;
 
             for line in lines {
@@ -190,7 +239,7 @@ where
                         );
                         let actually_complete_line =
                             std::mem::replace(actually_complete_line, line.to_vec());
-                        complete_lines.push(actually_complete_line);
+                        self.complete_lines.push_back(actually_complete_line);
                     }
                 }
             }
@@ -204,51 +253,10 @@ where
                 None => unreachable!(), // we always set it after processing a line, and we always have at least one line
             }
 
-            for line in &complete_lines {
-                trace!("complete line: {:?}", logify(line));
-            }
-
-            // Phase 2: decode the lines into events.
-
-            let mut seen_empty_line = false;
-
-            for line in complete_lines {
-                if line.is_empty() {
-                    trace!("empty line");
-                    seen_empty_line = true;
-                    continue;
+            if log_enabled!(log::Level::Trace) {
+                for line in &self.complete_lines {
+                    trace!("complete line: {:?}", logify(line));
                 }
-
-                if let Some((key, value)) = parse_field(&line)? {
-                    if self.event.is_none() {
-                        self.event = Some(Event::new());
-                    }
-
-                    let mut event = self.event.as_mut().unwrap();
-
-                    if key == "event" {
-                        event.event_type = from_utf8(value)
-                            .map_err(Error::InvalidEventType)?
-                            .to_string();
-                    } else {
-                        event.append_field(key, value);
-                    }
-                }
-            }
-
-            trace!(
-                "seen empty line: {} (event is {:?})",
-                seen_empty_line,
-                self.event.as_ref().map(|event| &event.event_type)
-            );
-
-            match (seen_empty_line, &self.event) {
-                (_, None) => (),
-                (true, Some(_)) => {
-                    let event = std::mem::replace(&mut self.event, None);
-                    return Ok(Async::Ready(event));
-                }
-                (false, Some(_)) => debug!("Haven't seen an empty line in this whole chunk, weird"),
             }
         }
     }
