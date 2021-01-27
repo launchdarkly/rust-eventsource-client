@@ -566,4 +566,89 @@ mod tests {
             res => panic!("expected InvalidLine error, got {:?}", res),
         }
     }
+
+    #[test]
+    fn test_decode_one_event() {
+        let stream = one_chunk_from_file("one-event.sse");
+        let mut decoded = Decoded::new(stream);
+
+        let event = next_event(&mut decoded);
+        assert_eq!(event.event_type, "patch");
+        let data = event_data(&event).expect("event data should parse");
+        assert!(data.contains(r#"path":"/flags/goals.02.featureWithGoals"#));
+
+        assert_eof(decoded);
+    }
+
+    #[test]
+    fn test_decode_two_events() {
+        let stream = one_chunk_from_file("two-events.sse");
+        let mut decoded = Decoded::new(stream);
+
+        let event = next_event(&mut decoded);
+        assert_eq!(event.event_type, "one");
+        let data = event_data(&event).expect("event data should parse");
+        assert_eq!(data, "One\n");
+
+        let event = next_event(&mut decoded);
+        assert_eq!(event.event_type, "two");
+        let data = event_data(&event).expect("event data should parse");
+        assert_eq!(data, "Two\n");
+
+        assert_eof(decoded);
+    }
+
+    #[test]
+    fn test_decode_big_event_followed_by_another() {
+        let stream = one_chunk_from_file("big-event-followed-by-another.sse");
+        let mut decoded = Decoded::new(stream);
+
+        let event = next_event(&mut decoded);
+        assert_eq!(event.event_type, "patch");
+        let data = event_data(&event).expect("event data should parse");
+        assert!(data.len() > 10_000);
+        assert!(data.contains(r#"path":"/flags/big.00.bigFeatureKey"#));
+
+        let event = next_event(&mut decoded);
+        assert_eq!(event.event_type, "patch");
+        let data = event_data(&event).expect("event data should parse");
+        assert!(data.contains(r#"path":"/flags/goals.02.featureWithGoals"#));
+
+        assert_eof(decoded);
+    }
+
+    fn one_chunk_from_file(name: &str) -> impl Stream<Item = ra::Chunk, Error = Error> {
+        let bytes =
+            std::fs::read(format!("test-data/{}", name)).expect(&format!("couldn't read {}", name));
+        one_chunk(&bytes)
+    }
+
+    fn event_data(event: &Event) -> std::result::Result<&str, String> {
+        let data = event.field("data").ok_or("no data field")?;
+        from_utf8(data).map_err(|e| format!("invalid UTF-8: {}", e))
+    }
+
+    fn assert_eof<S>(mut s: Decoded<S>)
+    where
+        S: Stream<Item = ra::Chunk>,
+        Error: From<S::Error>,
+    {
+        match s.poll().expect("poll should succeed") {
+            Ready(None) => (),
+            Ready(Some(event)) => panic!(format!("expected eof, got {:?}", event)),
+            NotReady => panic!("expected eof, got NotReady"),
+        }
+    }
+
+    fn next_event<S>(s: &mut Decoded<S>) -> Event
+    where
+        S: Stream<Item = ra::Chunk>,
+        Error: From<S::Error>,
+    {
+        match s.poll().expect("poll should succeed") {
+            Ready(Some(event)) => event,
+            Ready(None) => panic!("expected event, got eof"),
+            NotReady => panic!("expected event, got NotReady"),
+        }
+    }
 }
