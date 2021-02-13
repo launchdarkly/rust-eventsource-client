@@ -121,7 +121,7 @@ impl<C> Client<C> {
     ///
     /// After the first successful connection, the stream will
     /// reconnect for retryable errors.
-    pub fn stream(&mut self) -> EventStream<C>
+    pub fn stream(&self) -> EventStream<C>
     where
         C: Connect + Clone + Send + Sync + 'static,
     {
