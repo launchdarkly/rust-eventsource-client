@@ -1,10 +1,11 @@
-use std::{env, process, time::Duration};
+use std::{env, process, str::from_utf8, time::Duration};
 
-use futures::{future::Future, lazy, stream::Stream};
+use futures::{Stream, TryStreamExt};
 
 use eventsource_client as es;
 
-fn main() -> Result<(), es::Error> {
+#[tokio::main]
+async fn main() -> Result<(), es::Error> {
     env_logger::init();
 
     let args: Vec<String> = env::args().collect();
@@ -28,16 +29,22 @@ fn main() -> Result<(), es::Error> {
                 .build(),
         )
         .build();
-    tokio::run(lazy(|| tail_events(client)));
+
+    let mut stream = Box::pin(tail_events(client));
+    while let Ok(Some(_)) = stream.try_next().await {}
+
     Ok(())
 }
 
-fn tail_events(mut client: es::Client) -> impl Future<Item = (), Error = ()> {
+fn tail_events(mut client: es::Client<es::HttpsConnector>) -> impl Stream<Item = Result<(), ()>> {
     client
         .stream()
-        .for_each(|event| {
-            println!("got an event: {}", event.event_type);
-            Ok(())
+        .map_ok(|event| {
+            println!(
+                "got an event: {}\n{}",
+                event.event_type,
+                from_utf8(event.field("data").unwrap_or_default()).unwrap_or_default()
+            )
         })
         .map_err(|err| eprintln!("error streaming events: {:?}", err))
 }
