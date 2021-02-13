@@ -3,6 +3,7 @@ use std::str::from_utf8;
 
 use futures::stream::{Fuse, Stream};
 use futures::{Async, Poll};
+use log::{debug, trace};
 use reqwest::r#async as ra;
 
 use super::error::{Error, Result};
@@ -330,8 +331,7 @@ mod tests {
         evt
     }
 
-    use futures::stream;
-    use Async::{NotReady, Ready};
+    use maplit::btreemap;
 
     fn one_chunk(bytes: &[u8]) -> impl Stream<Item = ra::Chunk, Error = Error> {
         stream::once(Ok(chunk(bytes)))

@@ -24,16 +24,6 @@
 //![Server-Sent Events]: https://html.spec.whatwg.org/multipage/server-sent-events.html
 //![EventSource]: https://developer.mozilla.org/en-US/docs/Web/API/EventSource
 
-#[macro_use]
-extern crate futures;
-
-#[macro_use]
-extern crate log;
-
-#[cfg(test)]
-#[macro_use]
-extern crate maplit;
-
 mod client;
 mod config;
 mod decode;

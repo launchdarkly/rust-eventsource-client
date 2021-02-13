@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use futures::future::Future;
 use futures::stream::{MapErr, Stream};
 use futures::{Async, Poll};
+use log::{debug, info, trace, warn};
 use reqwest as r;
 use reqwest::{r#async as ra, Url};
 use tokio_timer::Delay;
