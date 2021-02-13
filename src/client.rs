@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use futures::{ready, stream::Stream};
+use futures::{ready, Stream};
 use hyper::{
     body::{Bytes, HttpBody},
     client::{connect::Connect, ResponseFuture},
@@ -113,10 +113,12 @@ impl Client<()> {
 
 impl<C> Client<C> {
     /// Connect to the server and begin consuming the stream. Produces a
-    /// [`Stream`] of [`Event`]s.
+    /// [`Stream`] of [`Event`](crate::Event)s wrapped in [`Result`].
     ///
-    /// [`Stream`]: ../futures/stream/trait.Stream.html
-    /// [`Event`]: struct.Event.html
+    /// Do not use the stream after it returned an error!
+    ///
+    /// After the first successful connection, the stream will
+    /// reconnect for retryable errors.
     pub fn stream(&mut self) -> Decoded<ReconnectingRequest<C>>
     where
         C: Connect + Clone + Send + Sync + 'static,
