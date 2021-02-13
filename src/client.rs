@@ -140,6 +140,7 @@ pub struct ReconnectingRequest<C> {
     next_reconnect_delay: Duration,
 }
 
+#[allow(clippy::large_enum_variant)] // false positive
 #[pin_project(project = StateProj)]
 enum State {
     New,
