@@ -106,9 +106,16 @@ fn parse_key(key: &[u8]) -> Result<&str> {
 
 #[must_use = "streams do nothing unless polled"]
 pub struct Decoded<S> {
+    /// the underlying byte stream to decode
     chunk_stream: Fuse<S>,
+    /// buffer for lines we know are complete (terminated) but not yet parsed into event fields, in
+    /// the order received
     complete_lines: VecDeque<Vec<u8>>,
+    /// buffer for the most-recently received line, pending completion (by a newline terminator) or
+    /// extension (by more non-newline bytes)
     incomplete_line: Option<Vec<u8>>,
+    /// the event currently being decoded
+    /// TODO does this need to be Option?
     event: Option<Event>,
 }
 
@@ -119,6 +126,46 @@ impl<S: Stream> Decoded<S> {
             complete_lines: VecDeque::with_capacity(10),
             incomplete_line: None,
             event: None,
+        }
+    }
+
+    // Populate the event fields from the complete lines already seen, until we either encounter an
+    // empty line - indicating we've decoded a complete event - or we run out of complete lines to
+    // process.
+    //
+    // Returns the event for dispatch if it is complete.
+    fn parse_complete_lines_into_event(&mut self) -> Result<Option<Event>> {
+        let mut seen_empty_line = false;
+
+        while let Some(line) = self.complete_lines.pop_front() {
+            if line.is_empty() {
+                seen_empty_line = true;
+                break;
+            }
+
+            if let Some((key, value)) = parse_field(&line)? {
+                let event = self.event.get_or_insert_with(Event::new);
+
+                if key == "event" {
+                    event.event_type = from_utf8(value)
+                        .map_err(Error::InvalidEventType)?
+                        .to_string();
+                } else {
+                    event.append_field(key, value);
+                }
+            }
+        }
+
+        if seen_empty_line {
+            let event = self.event.take();
+            trace!(
+                "seen empty line, event is {:?})",
+                event.as_ref().map(|event| &event.event_type)
+            );
+            Ok(event)
+        } else {
+            trace!("processed all complete lines but event not yet complete");
+            Ok(None)
         }
     }
 }
@@ -140,46 +187,9 @@ where
 
             // Phase 2: decode the lines into events.
 
-            let mut seen_empty_line = false;
-
-            while let Some(line) = self.complete_lines.pop_front() {
-                if line.is_empty() {
-                    trace!("empty line");
-                    seen_empty_line = true;
-                    break;
-                    // TODO is there an overlap between self.event and self.complete_lines?
-                }
-
-                if let Some((key, value)) = parse_field(&line)? {
-                    if self.event.is_none() {
-                        self.event = Some(Event::new());
-                    }
-
-                    let mut event = self.event.as_mut().unwrap();
-
-                    if key == "event" {
-                        event.event_type = from_utf8(value)
-                            .map_err(Error::InvalidEventType)?
-                            .to_string();
-                    } else {
-                        event.append_field(key, value);
-                    }
-                }
-            }
-
-            trace!(
-                "seen empty line: {} (event is {:?})",
-                seen_empty_line,
-                self.event.as_ref().map(|event| &event.event_type)
-            );
-
-            match (seen_empty_line, &self.event) {
-                (_, None) => (),
-                (true, Some(_)) => {
-                    let event = std::mem::replace(&mut self.event, None);
-                    return Ok(Async::Ready(event));
-                }
-                (false, Some(_)) => debug!("Haven't seen an empty line in this whole chunk, weird"),
+            if let Some(event) = self.parse_complete_lines_into_event()? {
+                debug!("decoded a complete event");
+                return Ok(Async::Ready(Some(event)));
             }
 
             let chunk = match try_ready!(self.chunk_stream.poll()) {
