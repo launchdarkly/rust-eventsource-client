@@ -514,7 +514,10 @@ mod tests {
         let repeated_newlines = one_chunk(b"\n\n\n\n");
         // spec seems unclear on whether this should actually dispatch empty events, but that seems
         // unhelpful for all practical purposes
-        assert_eq!(Decoded::new(repeated_newlines).poll(), Ok(Ready(None)));
+        assert_eq!(
+            Decoded::new(repeated_newlines).poll_next_unpin(&mut cx),
+            Ready(None)
+        );
 
         let one_comment_unterminated = one_chunk(b":hello");
         let mut decoded = Decoded::new(one_comment_unterminated);
@@ -634,7 +637,7 @@ mod tests {
         assert_eof(decoded);
     }
 
-    fn one_chunk_from_file(name: &str) -> impl Stream<Item = ra::Chunk, Error = Error> {
+    fn one_chunk_from_file(name: &str) -> impl Stream<Item = Result<Bytes>> + Unpin {
         let bytes =
             std::fs::read(format!("test-data/{}", name)).expect(&format!("couldn't read {}", name));
         one_chunk(&bytes)
@@ -647,25 +650,28 @@ mod tests {
 
     fn assert_eof<S>(mut s: Decoded<S>)
     where
-        S: Stream<Item = ra::Chunk>,
-        Error: From<S::Error>,
+        S: Stream<Item = Result<Bytes>> + Unpin,
     {
-        match s.poll().expect("poll should succeed") {
-            Ready(None) => (),
-            Ready(Some(event)) => panic!(format!("expected eof, got {:?}", event)),
-            NotReady => panic!("expected eof, got NotReady"),
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        match s.poll_next_unpin(&mut cx) {
+            Poll::Ready(None) => (),
+            Poll::Ready(Some(event)) => panic!(format!("expected eof, got {:?}", event)),
+            Poll::Pending => panic!("expected eof, got Pending"),
         }
     }
 
     fn next_event<S>(s: &mut Decoded<S>) -> Event
     where
-        S: Stream<Item = ra::Chunk>,
-        Error: From<S::Error>,
+        S: Stream<Item = Result<Bytes>> + Unpin,
     {
-        match s.poll().expect("poll should succeed") {
-            Ready(Some(event)) => event,
-            Ready(None) => panic!("expected event, got eof"),
-            NotReady => panic!("expected event, got NotReady"),
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        match s.poll_next_unpin(&mut cx) {
+            Poll::Ready(Some(Ok(event))) => event,
+            Poll::Ready(Some(Err(e))) => panic!(format!("expected eof, got error: {:?}", e)),
+            Poll::Ready(None) => panic!("expected event, got eof"),
+            Poll::Pending => panic!("expected event, got Pending"),
         }
     }
 }
