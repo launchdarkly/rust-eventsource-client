@@ -115,7 +115,6 @@ pub struct Decoded<S> {
     /// extension (by more non-newline bytes)
     incomplete_line: Option<Vec<u8>>,
     /// the event currently being decoded
-    /// TODO does this need to be Option?
     event: Option<Event>,
 }
 
