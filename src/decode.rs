@@ -168,6 +168,65 @@ impl<S: Stream> Decoded<S> {
             Ok(None)
         }
     }
+
+    // Decode a chunk into lines and buffer them for subsequent parsing, taking account of
+    // incomplete lines from previous chunks.
+    fn decode_and_buffer_lines(&mut self, chunk: ra::Chunk) {
+        // TODO(ch86257) also handle lines ending in \r, \r\n (and EOF?)
+        let mut lines = chunk.split(|&b| b == b'\n');
+
+        // The first and last elements in this split are special. The spec requires lines to be
+        // terminated. But lines may span chunks, so:
+        //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
+        //    should be buffered as an incomplete line
+        //  * the first line should be appended to the incomplete line, if any
+
+        if let Some(incomplete_line) = self.incomplete_line.as_mut() {
+            let line = lines
+                .next()
+                // split always returns at least one item
+                .unwrap();
+            trace!(
+                "extending line from previous chunk: {:?}+{:?}",
+                logify(&incomplete_line),
+                logify(line)
+            );
+            incomplete_line.extend_from_slice(line);
+        }
+
+        let mut lines = lines.peekable();
+        while let Some(line) = lines.next() {
+            if let Some(actually_complete_line) = self.incomplete_line.take() {
+                // we saw the next line, so the previous one must have been complete after all
+                trace!(
+                    "previous line was complete: {:?}",
+                    logify(&actually_complete_line)
+                );
+                self.complete_lines.push_back(actually_complete_line);
+            }
+
+            if lines.peek().is_some() {
+                // this line is not the last
+                self.complete_lines.push_back(line.to_vec());
+            } else if line.is_empty() {
+                // this is the last line and it's empty, no need to buffer it
+                trace!("chunk ended with a line terminator");
+            } else {
+                // last line needs to be buffered as it may be incomplete
+                trace!("buffering incomplete line: {:?}", logify(&line));
+                self.incomplete_line = Some(line.to_vec());
+            }
+        }
+
+        if log_enabled!(log::Level::Trace) {
+            for line in &self.complete_lines {
+                trace!("complete line: {:?}", logify(line));
+            }
+            if let Some(line) = &self.incomplete_line {
+                trace!("incomplete line: {:?}", logify(line));
+            }
+        }
+    }
 }
 
 impl<S> Stream for Decoded<S>
@@ -181,93 +240,39 @@ where
     fn poll(&mut self) -> Poll<Option<Event>, Error> {
         trace!("Decoded::poll");
 
+        // We get bytes from the underlying stream in chunks.  Decoding a chunk has two phases:
+        // decode the chunk into lines, and decode the lines into events.
+        //
+        // We counterintuitively do these two phases in reverse order. Because both lines and
+        // events may be split across chunks, we need to ensure we have a complete
+        // (newline-terminated) line before parsing it, and a complete event
+        // (empty-line-terminated) before returning it. So we buffer lines between poll()
+        // invocations, and begin by processing any incomplete events from previous invocations,
+        // before requesting new input from the underlying stream and processing that.
+
         loop {
-            // TODO this comment no longer makes any sense
-            // TODO decompose this loop into functions
-
-            // Phase 2: decode the lines into events.
-
             if let Some(event) = self.parse_complete_lines_into_event()? {
                 debug!("decoded a complete event");
                 return Ok(Async::Ready(Some(event)));
             }
 
-            let chunk = match try_ready!(self.chunk_stream.poll()) {
-                Some(c) => c,
-                None => match self.incomplete_line {
-                    None => return Ok(Async::Ready(None)),
-                    Some(_) => return Err(Error::UnexpectedEof),
-                },
+            let chunk = if let Some(c) = try_ready!(self.chunk_stream.poll()) {
+                trace!("decoder got a chunk: {:?}", logify(&c));
+                c
+            } else {
+                return match self.incomplete_line {
+                    None => {
+                        debug!("end of stream: no more chunks and nothing in the buffer");
+                        Ok(Async::Ready(None))
+                    }
+                    Some(_) => {
+                        debug!("unexpected end of stream: no more chunks but we still have an unterminated line buffered");
+                        Err(Error::UnexpectedEof)
+                    }
+                };
             };
 
-            trace!("decoder got a chunk: {:?}", logify(&chunk));
-
-            // Decoding a chunk has two phases: decode the chunk into lines, and decode the lines
-            // into events.
-
-            // Phase 1: decode the chunk into lines.
-
-            // TODO(ch86257) also handle lines ending in \r, \r\n (and EOF?)
-            let lines = chunk.split(|&b| b == b'\n');
-            // The first and last elements in this split are special. The spec requires lines to be
-            // terminated. But lines may span chunks, so:
-            //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
-            //    should be buffered as an incomplete line
-            //  * the first line should be appended to the incomplete line, if any
-
-            let mut maybe_incomplete_line: Option<Vec<u8>> = None;
-
-            for line in lines {
-                if let Some(incomplete_line) = &mut self.incomplete_line {
-                    // only the first line can hit this case, since it clears self.incomplete_line
-                    // and we don't fill it again until the end of the loop
-
-                    trace!(
-                        "completing line from previous chunk: {:?}+{:?}",
-                        logify(&incomplete_line),
-                        logify(line)
-                    );
-
-                    let mut incomplete_line =
-                        std::mem::replace(&mut self.incomplete_line, None).unwrap();
-                    incomplete_line.extend_from_slice(line);
-
-                    maybe_incomplete_line = Some(incomplete_line); // safe to clobber since this is the first line
-                    continue;
-                }
-
-                match &mut maybe_incomplete_line {
-                    None => {
-                        trace!("potentially incomplete line: {:?}", logify(line));
-                        maybe_incomplete_line = Some(line.to_vec());
-                    }
-                    Some(actually_complete_line) => {
-                        // we saw the next line, so the previous one must have been complete after all
-                        trace!(
-                            "previous line was complete: {:?}",
-                            logify(actually_complete_line)
-                        );
-                        let actually_complete_line =
-                            std::mem::replace(actually_complete_line, line.to_vec());
-                        self.complete_lines.push_back(actually_complete_line);
-                    }
-                }
-            }
-
-            match maybe_incomplete_line {
-                Some(l) if l.is_empty() => trace!("chunk ended with a line terminator"),
-                Some(incomplete_line) => {
-                    trace!("buffering incomplete line: {:?}", logify(&incomplete_line));
-                    self.incomplete_line = Some(incomplete_line);
-                }
-                None => unreachable!(), // we always set it after processing a line, and we always have at least one line
-            }
-
-            if log_enabled!(log::Level::Trace) {
-                for line in &self.complete_lines {
-                    trace!("complete line: {:?}", logify(line));
-                }
-            }
+            self.decode_and_buffer_lines(chunk);
         }
     }
 }
