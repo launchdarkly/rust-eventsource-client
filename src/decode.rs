@@ -511,6 +511,11 @@ mod tests {
             Ready(None)
         );
 
+        let repeated_newlines = one_chunk(b"\n\n\n\n");
+        // spec seems unclear on whether this should actually dispatch empty events, but that seems
+        // unhelpful for all practical purposes
+        assert_eq!(Decoded::new(repeated_newlines).poll(), Ok(Ready(None)));
+
         let one_comment_unterminated = one_chunk(b":hello");
         let mut decoded = Decoded::new(one_comment_unterminated);
         assert_eq!(
