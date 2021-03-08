@@ -72,8 +72,10 @@ pub struct ReconnectOptionsBuilder {
 
 impl ReconnectOptionsBuilder {
     pub fn new(reconnect: bool) -> Self {
-        let mut opts = ReconnectOptions::default();
-        opts.reconnect = reconnect;
+        let opts = ReconnectOptions {
+            reconnect,
+            ..Default::default()
+        };
         Self { opts }
     }
 
