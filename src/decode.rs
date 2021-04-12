@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap as Map,
+    collections::{BTreeMap as Map, VecDeque},
     pin::Pin,
     str::from_utf8,
     task::{Context, Poll},
@@ -11,7 +11,7 @@ use futures::{
     StreamExt,
 };
 use hyper::body::Bytes;
-use log::{debug, trace};
+use log::{debug, log_enabled, trace};
 use pin_project::pin_project;
 
 use super::error::{Error, Result};
@@ -113,9 +113,16 @@ fn parse_key(key: &[u8]) -> Result<&str> {
 #[pin_project]
 #[must_use = "streams do nothing unless polled"]
 pub struct Decoded<S> {
+    /// the underlying byte stream to decode
     #[pin]
     chunk_stream: Fuse<S>,
+    /// buffer for lines we know are complete (terminated) but not yet parsed into event fields, in
+    /// the order received
+    complete_lines: VecDeque<Vec<u8>>,
+    /// buffer for the most-recently received line, pending completion (by a newline terminator) or
+    /// extension (by more non-newline bytes)
     incomplete_line: Option<Vec<u8>>,
+    /// the event currently being decoded
     event: Option<Event>,
 }
 
@@ -123,8 +130,112 @@ impl<S: Stream> Decoded<S> {
     pub fn new(s: S) -> Decoded<S> {
         Decoded {
             chunk_stream: s.fuse(),
+            complete_lines: VecDeque::with_capacity(10),
             incomplete_line: None,
             event: None,
+        }
+    }
+
+    // Populate the event fields from the complete lines already seen, until we either encounter an
+    // empty line - indicating we've decoded a complete event - or we run out of complete lines to
+    // process.
+    //
+    // Returns the event for dispatch if it is complete.
+    fn parse_complete_lines_into_event(mut self: Pin<&mut Self>) -> Result<Option<Event>> {
+        let mut seen_empty_line = false;
+
+        let this = self.as_mut().project();
+
+        while let Some(line) = this.complete_lines.pop_front() {
+            if line.is_empty() {
+                seen_empty_line = true;
+                break;
+            }
+
+            if let Some((key, value)) = parse_field(&line)? {
+                let event = this.event.get_or_insert_with(Event::new);
+
+                if key == "event" {
+                    event.event_type = from_utf8(value)
+                        .map_err(Error::InvalidEventType)?
+                        .to_string();
+                } else {
+                    event.append_field(key, value);
+                }
+            }
+        }
+
+        if seen_empty_line {
+            let event = this.event.take();
+            trace!(
+                "seen empty line, event is {:?})",
+                event.as_ref().map(|event| &event.event_type)
+            );
+            Ok(event)
+        } else {
+            trace!("processed all complete lines but event not yet complete");
+            Ok(None)
+        }
+    }
+
+    // Decode a chunk into lines and buffer them for subsequent parsing, taking account of
+    // incomplete lines from previous chunks.
+    fn decode_and_buffer_lines(mut self: Pin<&mut Self>, chunk: Bytes) {
+        let this = self.as_mut().project();
+
+        // TODO(ch86257) also handle lines ending in \r, \r\n (and EOF?)
+        let mut lines = chunk.split(|&b| b == b'\n');
+
+        // The first and last elements in this split are special. The spec requires lines to be
+        // terminated. But lines may span chunks, so:
+        //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
+        //    should be buffered as an incomplete line
+        //  * the first line should be appended to the incomplete line, if any
+
+        if let Some(incomplete_line) = this.incomplete_line.as_mut() {
+            let line = lines
+                .next()
+                // split always returns at least one item
+                .unwrap();
+            trace!(
+                "extending line from previous chunk: {:?}+{:?}",
+                logify(&incomplete_line),
+                logify(line)
+            );
+            incomplete_line.extend_from_slice(line);
+        }
+
+        let mut lines = lines.peekable();
+        while let Some(line) = lines.next() {
+            if let Some(actually_complete_line) = this.incomplete_line.take() {
+                // we saw the next line, so the previous one must have been complete after all
+                trace!(
+                    "previous line was complete: {:?}",
+                    logify(&actually_complete_line)
+                );
+                this.complete_lines.push_back(actually_complete_line);
+            }
+
+            if lines.peek().is_some() {
+                // this line is not the last
+                this.complete_lines.push_back(line.to_vec());
+            } else if line.is_empty() {
+                // this is the last line and it's empty, no need to buffer it
+                trace!("chunk ended with a line terminator");
+            } else {
+                // last line needs to be buffered as it may be incomplete
+                trace!("buffering incomplete line: {:?}", logify(&line));
+                *this.incomplete_line = Some(line.to_vec());
+            }
+        }
+
+        if log_enabled!(log::Level::Trace) {
+            for line in &self.complete_lines {
+                trace!("complete line: {:?}", logify(line));
+            }
+            if let Some(line) = &self.incomplete_line {
+                trace!("incomplete line: {:?}", logify(line));
+            }
         }
     }
 }
@@ -138,124 +249,44 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         trace!("Decoded::poll");
 
+        // We get bytes from the underlying stream in chunks.  Decoding a chunk has two phases:
+        // decode the chunk into lines, and decode the lines into events.
+        //
+        // We counterintuitively do these two phases in reverse order. Because both lines and
+        // events may be split across chunks, we need to ensure we have a complete
+        // (newline-terminated) line before parsing it, and a complete event
+        // (empty-line-terminated) before returning it. So we buffer lines between poll()
+        // invocations, and begin by processing any incomplete events from previous invocations,
+        // before requesting new input from the underlying stream and processing that.
+
+        if let Some(event) = self.as_mut().parse_complete_lines_into_event()? {
+            debug!("decoded a complete event");
+            return Poll::Ready(Some(Ok(event)));
+        }
+
         let this = self.as_mut().project();
 
         let chunk = match ready!(this.chunk_stream.poll_next(cx)) {
-            Some(Ok(c)) => c,
+            Some(Ok(c)) => {
+                trace!("decoder got a chunk: {:?}", logify(&c));
+                c
+            }
             Some(Err(e)) => return Poll::Ready(Some(Err(e))),
-            None => match self.incomplete_line {
-                None => return Poll::Ready(None),
-                Some(_) => return Poll::Ready(Some(Err(Error::UnexpectedEof))),
-            },
+            None => {
+                return match this.incomplete_line {
+                    None => {
+                        debug!("end of stream: no more chunks and nothing in the buffer");
+                        Poll::Ready(None)
+                    }
+                    Some(_) => {
+                        debug!("unexpected end of stream: no more chunks but we still have an unterminated line buffered");
+                        Poll::Ready(Some(Err(Error::UnexpectedEof)))
+                    }
+                };
+            }
         };
 
-        trace!("decoder got a chunk: {:?}", logify(&chunk));
-
-        // Decoding a chunk has two phases: decode the chunk into lines, and decode the lines
-        // into events.
-
-        // Phase 1: decode the chunk into lines.
-
-        // TODO(ch86257) also handle lines ending in \r, \r\n (and EOF?)
-        let lines = chunk.split(|&b| b == b'\n');
-        // The first and last elements in this split are special. The spec requires lines to be
-        // terminated. But lines may span chunks, so:
-        //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
-        //    should be buffered as an incomplete line
-        //  * the first line should be appended to the incomplete line, if any
-
-        let mut complete_lines: Vec<Vec<u8>> = Vec::with_capacity(10);
-        let mut maybe_incomplete_line: Option<Vec<u8>> = None;
-
-        for line in lines {
-            if let Some(mut incomplete_line) = this.incomplete_line.take() {
-                // only the first line can hit this case, since it clears self.incomplete_line
-                // and we don't fill it again until the end of the loop
-
-                trace!(
-                    "completing line from previous chunk: {:?}+{:?}",
-                    logify(&incomplete_line),
-                    logify(line)
-                );
-
-                incomplete_line.extend_from_slice(line);
-
-                maybe_incomplete_line = Some(incomplete_line); // safe to clobber since this is the first line
-                continue;
-            }
-
-            match &mut maybe_incomplete_line {
-                None => {
-                    trace!("potentially incomplete line: {:?}", logify(line));
-                    maybe_incomplete_line = Some(line.to_vec());
-                }
-                Some(actually_complete_line) => {
-                    // we saw the next line, so the previous one must have been complete after all
-                    trace!(
-                        "previous line was complete: {:?}",
-                        logify(actually_complete_line)
-                    );
-                    let actually_complete_line =
-                        std::mem::replace(actually_complete_line, line.to_vec());
-                    complete_lines.push(actually_complete_line);
-                }
-            }
-        }
-
-        match maybe_incomplete_line {
-            Some(l) if l.is_empty() => trace!("chunk ended with a line terminator"),
-            Some(incomplete_line) => {
-                trace!("buffering incomplete line: {:?}", logify(&incomplete_line));
-                this.incomplete_line.replace(incomplete_line);
-            }
-            None => unreachable!(), // we always set it after processing a line, and we always have at least one line
-        }
-
-        for line in &complete_lines {
-            trace!("complete line: {:?}", logify(line));
-        }
-
-        // Phase 2: decode the lines into events.
-
-        let mut seen_empty_line = false;
-
-        for line in complete_lines {
-            if line.is_empty() {
-                trace!("empty line");
-                seen_empty_line = true;
-                continue;
-            }
-
-            if let Some((key, value)) = parse_field(&line)? {
-                if this.event.is_none() {
-                    this.event.replace(Event::new());
-                }
-                let mut event = this.event.as_mut().unwrap();
-
-                if key == "event" {
-                    event.event_type = from_utf8(value)
-                        .map_err(Error::InvalidEventType)?
-                        .to_string();
-                } else {
-                    event.append_field(key, value);
-                }
-            }
-        }
-
-        trace!(
-            "seen empty line: {} (event is {:?})",
-            seen_empty_line,
-            this.event.as_ref().map(|event| &event.event_type)
-        );
-
-        match (seen_empty_line, &this.event) {
-            (true, Some(_)) => {
-                let event = this.event.take();
-                return Poll::Ready(Ok(event).transpose());
-            }
-            (false, Some(_)) => debug!("Haven't seen an empty line in this whole chunk, weird"),
-            (_, None) => (),
-        }
+        self.as_mut().decode_and_buffer_lines(chunk);
 
         self.poll_next(cx)
     }
