@@ -259,36 +259,36 @@ where
         // invocations, and begin by processing any incomplete events from previous invocations,
         // before requesting new input from the underlying stream and processing that.
 
-        if let Some(event) = self.as_mut().parse_complete_lines_into_event()? {
-            debug!("decoded a complete event");
-            return Poll::Ready(Some(Ok(event)));
+        loop {
+            if let Some(event) = self.as_mut().parse_complete_lines_into_event()? {
+                debug!("decoded a complete event");
+                return Poll::Ready(Some(Ok(event)));
+            }
+
+            let this = self.as_mut().project();
+
+            let chunk = match ready!(this.chunk_stream.poll_next(cx)) {
+                Some(Ok(c)) => {
+                    trace!("decoder got a chunk: {:?}", logify(&c));
+                    c
+                }
+                Some(Err(e)) => return Poll::Ready(Some(Err(e))),
+                None => {
+                    return match this.incomplete_line {
+                        None => {
+                            debug!("end of stream: no more chunks and nothing in the buffer");
+                            Poll::Ready(None)
+                        }
+                        Some(_) => {
+                            debug!("unexpected end of stream: no more chunks but we still have an unterminated line buffered");
+                            Poll::Ready(Some(Err(Error::UnexpectedEof)))
+                        }
+                    };
+                }
+            };
+
+            self.as_mut().decode_and_buffer_lines(chunk);
         }
-
-        let this = self.as_mut().project();
-
-        let chunk = match ready!(this.chunk_stream.poll_next(cx)) {
-            Some(Ok(c)) => {
-                trace!("decoder got a chunk: {:?}", logify(&c));
-                c
-            }
-            Some(Err(e)) => return Poll::Ready(Some(Err(e))),
-            None => {
-                return match this.incomplete_line {
-                    None => {
-                        debug!("end of stream: no more chunks and nothing in the buffer");
-                        Poll::Ready(None)
-                    }
-                    Some(_) => {
-                        debug!("unexpected end of stream: no more chunks but we still have an unterminated line buffered");
-                        Poll::Ready(Some(Err(Error::UnexpectedEof)))
-                    }
-                };
-            }
-        };
-
-        self.as_mut().decode_and_buffer_lines(chunk);
-
-        self.poll_next(cx)
     }
 }
 

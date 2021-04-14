@@ -243,65 +243,71 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         trace!("ReconnectingRequest::poll({:?})", &self.state);
 
-        let state = self.as_mut().project().state.project();
-        let new_state = match state {
-            // New immediately transitions to Connecting, and exists only
-            // to ensure that we only connect when polled.
-            StateProj::New => {
-                let resp = match self.send_request() {
-                    Err(e) => return Poll::Ready(Some(Err(e))),
-                    Ok(r) => r,
-                };
-                State::Connecting {
-                    resp,
-                    retry: self.props.reconnect_opts.retry_initial,
-                }
-            }
-            StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
-                Ok(resp) => {
-                    debug!("HTTP response: {:#?}", resp);
+        loop {
+            trace!("ReconnectingRequest::poll loop({:?})", &self.state);
 
-                    if !resp.status().is_success() {
-                        let e = StatusError {
-                            status: resp.status(),
-                        };
-                        return Poll::Ready(Some(Err(Error::HttpRequest(Box::new(e)))));
+            let state = self.as_mut().project().state.project();
+            let new_state = match state {
+                // New immediately transitions to Connecting, and exists only
+                // to ensure that we only connect when polled.
+                StateProj::New => {
+                    let resp = match self.send_request() {
+                        Err(e) => return Poll::Ready(Some(Err(e))),
+                        Ok(r) => r,
+                    };
+                    State::Connecting {
+                        resp,
+                        retry: self.props.reconnect_opts.retry_initial,
                     }
+                }
+                StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
+                    Ok(resp) => {
+                        debug!("HTTP response: {:#?}", resp);
 
-                    self.as_mut().reset_backoff();
-                    State::Connected(resp.into_body())
-                }
-                Err(e) => {
-                    warn!("request returned an error: {}", e);
-                    if !*retry {
-                        return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
+                        if !resp.status().is_success() {
+                            let e = StatusError {
+                                status: resp.status(),
+                            };
+                            return Poll::Ready(Some(Err(Error::HttpRequest(Box::new(e)))));
+                        }
+
+                        self.as_mut().reset_backoff();
+                        State::Connected(resp.into_body())
                     }
-                    State::WaitingToReconnect(delay(self.as_mut().backoff(), "retrying"))
-                }
-            },
-            StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
-                Some(Ok(result)) => {
-                    return Poll::Ready(Some(Ok(result)));
-                }
-                res => {
-                    // reconnect
-                    if self.props.reconnect_opts.reconnect {
-                        State::WaitingToReconnect(delay(self.as_mut().backoff(), "reconnecting"))
-                    } else {
-                        return Poll::Ready(
-                            res.map(|r| r.map_err(|e| Error::HttpStream(Box::new(e)))),
-                        );
+                    Err(e) => {
+                        warn!("request returned an error: {}", e);
+                        if !*retry {
+                            return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
+                        }
+                        State::WaitingToReconnect(delay(self.as_mut().backoff(), "retrying"))
                     }
+                },
+                StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
+                    Some(Ok(result)) => {
+                        return Poll::Ready(Some(Ok(result)));
+                    }
+                    res => {
+                        // reconnect
+                        if self.props.reconnect_opts.reconnect {
+                            State::WaitingToReconnect(delay(
+                                self.as_mut().backoff(),
+                                "reconnecting",
+                            ))
+                        } else {
+                            return Poll::Ready(
+                                res.map(|r| r.map_err(|e| Error::HttpStream(Box::new(e)))),
+                            );
+                        }
+                    }
+                },
+                StateProj::WaitingToReconnect(delay) => {
+                    ready!(delay.poll(cx));
+                    info!("Reconnecting");
+                    let resp = self.send_request()?;
+                    State::Connecting { retry: true, resp }
                 }
-            },
-            StateProj::WaitingToReconnect(delay) => {
-                ready!(delay.poll(cx));
-                info!("Reconnecting");
-                let resp = self.send_request()?;
-                State::Connecting { retry: true, resp }
-            }
-        };
-        self.as_mut().project().state.set(new_state);
-        self.poll_next(cx)
+            };
+            self.as_mut().project().state.set(new_state);
+        }
     }
 }
