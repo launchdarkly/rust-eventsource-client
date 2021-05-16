@@ -35,7 +35,7 @@ jobs:
 
       - run:
           name: cargo publish
-          command: cargo publish --token $CRATES_IO_TOKEN
+          command: cargo publish --verbose --token $CRATES_IO_TOKEN
 
 workflows:
   version: 2
