@@ -11,13 +11,23 @@ exclude = [
 ]
 
 [dependencies]
-futures = "0.1.25"
+futures = "0.3.12"
+hyper = { version = "0.14.4", features = ["client", "http1", "tcp"] }
+hyper-rustls = { version = "0.22.1", optional = true }
 log = "0.4.6"
-reqwest = "0.9.11"
-tokio-timer = "0.2.11"
+pin-project = "1.0.5"
+tokio = { version = "1.2.0", features = ["time"] }
 
 [dev-dependencies]
 env_logger = "0.7.1"
 maplit = "1.0.1"
 simplelog = "0.5.3"
-tokio = "0.1.16"
+tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = ["rustls"]
+rustls = ["hyper-rustls", "hyper/http2"]
+
+[[example]]
+name = "tail"
+required-features = ["rustls"]

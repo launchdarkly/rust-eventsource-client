@@ -18,9 +18,9 @@ jobs:
           name: Check consistent formatting
           command: cargo fmt && git diff --exit-code
       - run: cargo build
-      - run: cargo test
+      - run: cargo test --all-features
       - run: cargo doc --no-deps
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --all-features -- -D warnings
 
       - store_artifacts:
           path: target/doc

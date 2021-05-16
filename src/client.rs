@@ -1,16 +1,32 @@
-use std::fmt::{self, Debug, Formatter};
-use std::time::{Duration, Instant};
+use std::{
+    fmt::{self, Debug, Display, Formatter},
+    future::Future,
+    mem,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 
-use futures::future::Future;
-use futures::stream::{MapErr, Stream};
-use futures::{Async, Poll};
-use reqwest as r;
-use reqwest::{r#async as ra, Url};
-use tokio_timer::Delay;
+use futures::{ready, Stream};
+use hyper::{
+    body::{Bytes, HttpBody},
+    client::{connect::Connect, ResponseFuture},
+    header::HeaderMap,
+    Body, Request, StatusCode, Uri,
+};
+#[cfg(feature = "rustls")]
+use hyper_rustls::HttpsConnector as RustlsConnector;
+use log::{debug, info, trace, warn};
+use pin_project::pin_project;
+use tokio::time::Sleep;
 
 use super::config::ReconnectOptions;
-use super::decode::{Decoded, EventStream};
+use super::decode::Decoded;
 use super::error::{Error, Result};
+
+pub use hyper::client::HttpConnector;
+#[cfg(feature = "rustls")]
+pub type HttpsConnector = RustlsConnector<HttpConnector>;
 
 /*
  * TODO remove debug output
@@ -18,8 +34,8 @@ use super::error::{Error, Result};
  */
 
 pub struct ClientBuilder {
-    url: r::Url,
-    headers: r::header::HeaderMap,
+    url: Uri,
+    headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
 }
 
@@ -40,8 +56,12 @@ impl ClientBuilder {
         self
     }
 
-    pub fn build(self) -> Client {
+    fn build_with_conn<C>(self, conn: C) -> Client<C>
+    where
+        C: Connect + Clone,
+    {
         Client {
+            http: hyper::Client::builder().build(conn),
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
@@ -49,65 +69,90 @@ impl ClientBuilder {
             },
         }
     }
+
+    pub fn build_http(self) -> Client<HttpConnector> {
+        self.build_with_conn(HttpConnector::new())
+    }
+
+    #[cfg(feature = "rustls")]
+    pub fn build(self) -> Client<HttpsConnector> {
+        let conn = HttpsConnector::with_native_roots();
+        self.build_with_conn(conn)
+    }
 }
 
 #[derive(Clone)]
 struct RequestProps {
-    url: r::Url,
-    headers: r::header::HeaderMap,
+    url: Uri,
+    headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
 }
 
 /// Client that connects to a server using the Server-Sent Events protocol
 /// and consumes the event stream indefinitely.
-pub struct Client {
+pub struct Client<C> {
+    http: hyper::Client<C>,
     request_props: RequestProps,
 }
 
-impl Client {
+impl Client<()> {
     /// Construct a new `Client` (via a [`ClientBuilder`]). This will not
     /// perform any network activity until [`.stream()`] is called.
     ///
     /// [`ClientBuilder`]: struct.ClientBuilder.html
     /// [`.stream()`]: #method.stream
     pub fn for_url(url: &str) -> Result<ClientBuilder> {
-        let url = Url::parse(url).map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        let url = url.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
         Ok(ClientBuilder {
             url,
-            headers: r::header::HeaderMap::new(),
+            headers: HeaderMap::new(),
             reconnect_opts: ReconnectOptions::default(),
         })
     }
+}
 
+pub type EventStream<C> = Decoded<ReconnectingRequest<C>>;
+
+impl<C> Client<C> {
     /// Connect to the server and begin consuming the stream. Produces a
-    /// [`Stream`] of [`Event`]s.
+    /// [`Stream`] of [`Event`](crate::Event)s wrapped in [`Result`].
     ///
-    /// [`Stream`]: ../futures/stream/trait.Stream.html
-    /// [`Event`]: struct.Event.html
-    pub fn stream(&mut self) -> EventStream {
-        Box::new(Decoded::new(ReconnectingRequest::new(
+    /// Do not use the stream after it returned an error!
+    ///
+    /// After the first successful connection, the stream will
+    /// reconnect for retryable errors.
+    pub fn stream(&self) -> EventStream<C>
+    where
+        C: Connect + Clone + Send + Sync + 'static,
+    {
+        Decoded::new(ReconnectingRequest::new(
+            self.http.clone(),
             self.request_props.clone(),
-        )))
+        ))
     }
 }
 
 #[must_use = "streams do nothing unless polled"]
-struct ReconnectingRequest {
+#[pin_project]
+pub struct ReconnectingRequest<C> {
+    http: hyper::Client<C>,
     props: RequestProps,
-    http: ra::Client,
+    #[pin]
     state: State,
     next_reconnect_delay: Duration,
 }
 
+#[allow(clippy::large_enum_variant)] // false positive
+#[pin_project(project = StateProj)]
 enum State {
     New,
     Connecting {
         retry: bool,
-        // TODO remove box somehow
-        resp: Box<dyn Future<Item = ra::Response, Error = Error> + Send>,
+        #[pin]
+        resp: ResponseFuture,
     },
-    Connected(MapErr<ra::Decoder, fn(r::Error) -> Error>),
-    WaitingToReconnect(Delay),
+    Connected(#[pin] hyper::Body),
+    WaitingToReconnect(#[pin] Sleep),
 }
 
 impl State {
@@ -128,9 +173,8 @@ impl Debug for State {
     }
 }
 
-impl ReconnectingRequest {
-    fn new(props: RequestProps) -> ReconnectingRequest {
-        let http = ra::Client::new();
+impl<C> ReconnectingRequest<C> {
+    fn new(http: hyper::Client<C>, props: RequestProps) -> ReconnectingRequest<C> {
         let reconnect_delay = props.reconnect_opts.delay;
         ReconnectingRequest {
             props,
@@ -141,107 +185,129 @@ impl ReconnectingRequest {
     }
 }
 
-impl ReconnectingRequest {
-    fn send_request(&self) -> impl Future<Item = ra::Response, Error = Error> + Send {
-        let request = self
-            .http
-            .get(self.props.url.clone())
-            .headers(self.props.headers.clone());
-        request.send().map_err(|e| Error::HttpRequest(Box::new(e)))
+impl<C> ReconnectingRequest<C> {
+    fn send_request(&self) -> Result<ResponseFuture>
+    where
+        C: Connect + Clone + Send + Sync + 'static,
+    {
+        let mut request = Request::get(&self.props.url);
+        *request.headers_mut().unwrap() = self.props.headers.clone();
+        let request = request
+            .body(Body::empty())
+            .map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        Ok(self.http.request(request))
     }
 
-    fn backoff(&mut self) -> Duration {
+    fn backoff(mut self: Pin<&mut Self>) -> Duration {
         let delay = self.next_reconnect_delay;
-        self.next_reconnect_delay = std::cmp::min(
-            self.props.reconnect_opts.delay_max,
-            self.next_reconnect_delay * self.props.reconnect_opts.backoff_factor,
+        let this = self.as_mut().project();
+        let mut next_reconnect_delay = std::cmp::min(
+            this.props.reconnect_opts.delay_max,
+            *this.next_reconnect_delay * this.props.reconnect_opts.backoff_factor,
         );
+        mem::swap(this.next_reconnect_delay, &mut next_reconnect_delay);
         delay
     }
 
-    fn reset_backoff(&mut self) {
-        self.next_reconnect_delay = self.props.reconnect_opts.delay;
+    fn reset_backoff(self: Pin<&mut Self>) {
+        let mut delay = self.props.reconnect_opts.delay;
+        let this = self.project();
+        mem::swap(this.next_reconnect_delay, &mut delay);
     }
 }
 
-fn delay(dur: Duration, description: &str) -> Delay {
+fn delay(dur: Duration, description: &str) -> Sleep {
     info!("Waiting {:?} before {}", dur, description);
-    Delay::new(Instant::now() + dur)
+    tokio::time::sleep(dur)
 }
 
-impl Stream for ReconnectingRequest {
-    type Item = ra::Chunk;
-    type Error = Error;
+#[derive(Debug)]
+struct StatusError {
+    status: StatusCode,
+}
 
-    fn poll(&mut self) -> Poll<Option<ra::Chunk>, Error> {
+impl Display for StatusError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Invalid status code: {}", self.status)
+    }
+}
+
+impl std::error::Error for StatusError {}
+
+impl<C> Stream for ReconnectingRequest<C>
+where
+    C: Connect + Clone + Send + Sync + 'static,
+{
+    type Item = Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         trace!("ReconnectingRequest::poll({:?})", &self.state);
 
         loop {
             trace!("ReconnectingRequest::poll loop({:?})", &self.state);
-            let new_state = match self.state {
+
+            let state = self.as_mut().project().state.project();
+            let new_state = match state {
                 // New immediately transitions to Connecting, and exists only
                 // to ensure that we only connect when polled.
-                State::New => {
-                    let resp = self.send_request();
-                    State::Connecting {
-                        retry: self.props.reconnect_opts.retry_initial,
-                        resp: Box::new(resp),
-                    }
-                }
-                State::Connecting {
-                    retry,
-                    ref mut resp,
-                } => {
-                    let resp = match resp.poll() {
-                        Ok(Async::Ready(resp)) => resp,
-                        Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Err(e) => {
-                            warn!("request returned an error: {:?}", e);
-                            if retry {
-                                self.state =
-                                    State::WaitingToReconnect(delay(self.backoff(), "retrying"));
-                                continue;
-                            } else {
-                                return Err(e);
-                            }
-                        }
+                StateProj::New => {
+                    let resp = match self.send_request() {
+                        Err(e) => return Poll::Ready(Some(Err(e))),
+                        Ok(r) => r,
                     };
-                    debug!("HTTP response: {:#?}", resp);
-
-                    match resp.error_for_status() {
-                        Ok(resp) => {
-                            self.reset_backoff();
-                            State::Connected(
-                                resp.into_body().map_err(|e| Error::HttpStream(Box::new(e))),
-                            )
-                        }
-                        Err(e) => return Err(Error::HttpRequest(Box::new(e))),
+                    State::Connecting {
+                        resp,
+                        retry: self.props.reconnect_opts.retry_initial,
                     }
                 }
-                State::Connected(ref mut chunks) => match chunks.poll() {
-                    Ok(result) => {
-                        return Ok(result);
+                StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
+                    Ok(resp) => {
+                        debug!("HTTP response: {:#?}", resp);
+
+                        if !resp.status().is_success() {
+                            let e = StatusError {
+                                status: resp.status(),
+                            };
+                            return Poll::Ready(Some(Err(Error::HttpRequest(Box::new(e)))));
+                        }
+
+                        self.as_mut().reset_backoff();
+                        State::Connected(resp.into_body())
                     }
                     Err(e) => {
-                        warn!("chunk stream returned an error: {:?}", e);
+                        warn!("request returned an error: {}", e);
+                        if !*retry {
+                            return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
+                        }
+                        State::WaitingToReconnect(delay(self.as_mut().backoff(), "retrying"))
+                    }
+                },
+                StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
+                    Some(Ok(result)) => {
+                        return Poll::Ready(Some(Ok(result)));
+                    }
+                    res => {
+                        // reconnect
                         if self.props.reconnect_opts.reconnect {
-                            State::WaitingToReconnect(delay(self.backoff(), "reconnecting"))
+                            State::WaitingToReconnect(delay(
+                                self.as_mut().backoff(),
+                                "reconnecting",
+                            ))
                         } else {
-                            return Err(e);
+                            return Poll::Ready(
+                                res.map(|r| r.map_err(|e| Error::HttpStream(Box::new(e)))),
+                            );
                         }
                     }
                 },
-                State::WaitingToReconnect(ref mut delay) => {
-                    try_ready!(delay.poll());
+                StateProj::WaitingToReconnect(delay) => {
+                    ready!(delay.poll(cx));
                     info!("Reconnecting");
-                    let resp = self.send_request();
-                    State::Connecting {
-                        retry: true,
-                        resp: Box::new(resp),
-                    }
+                    let resp = self.send_request()?;
+                    State::Connecting { retry: true, resp }
                 }
             };
-            self.state = new_state;
+            self.as_mut().project().state.set(new_state);
         }
     }
 }
