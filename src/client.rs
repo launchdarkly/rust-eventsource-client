@@ -79,6 +79,17 @@ impl ClientBuilder {
         let conn = HttpsConnector::with_native_roots();
         self.build_with_conn(conn)
     }
+
+    pub fn build_with_http<C>(self, http: hyper::Client<C>) -> Client<C> {
+        Client {
+            http,
+            request_props: RequestProps {
+                url: self.url,
+                headers: self.headers,
+                reconnect_opts: self.reconnect_opts,
+            },
+        }
+    }
 }
 
 #[derive(Clone)]
