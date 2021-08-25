@@ -199,7 +199,7 @@ impl<S: Stream> Decoded<S> {
                 .unwrap();
             trace!(
                 "extending line from previous chunk: {:?}+{:?}",
-                logify(&incomplete_line),
+                logify(incomplete_line),
                 logify(line)
             );
             incomplete_line.extend_from_slice(line);
@@ -224,7 +224,7 @@ impl<S: Stream> Decoded<S> {
                 trace!("chunk ended with a line terminator");
             } else {
                 // last line needs to be buffered as it may be incomplete
-                trace!("buffering incomplete line: {:?}", logify(&line));
+                trace!("buffering incomplete line: {:?}", logify(line));
                 *this.incomplete_line = Some(line.to_vec());
             }
         }
