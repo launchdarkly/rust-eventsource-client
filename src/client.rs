@@ -80,7 +80,7 @@ impl ClientBuilder {
         self.build_with_conn(conn)
     }
 
-    pub fn build_with_http<C>(self, http: hyper::Client<C>) -> Client<C> {
+    pub fn build_with_http_client<C>(self, http: hyper::Client<C>) -> Client<C> {
         Client {
             http,
             request_props: RequestProps {
