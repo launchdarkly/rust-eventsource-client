@@ -206,7 +206,12 @@ impl<S: Stream> Decoded<S> {
         }
 
         let mut lines = lines.peekable();
-        while let Some(line) = lines.next() {
+        while let Some(mut line) = lines.next() {
+            // handle `\r\n` line ending as an acceptable line break
+            // to address part of the above TODO
+            if line.ends_with(&[b'\r']) {
+                line = &line[..line.len() - 1];
+            }
             if let Some(actually_complete_line) = this.incomplete_line.take() {
                 // we saw the next line, so the previous one must have been complete after all
                 trace!(
