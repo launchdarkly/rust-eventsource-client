@@ -328,6 +328,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{Error::*, *};
+    use test_case::test_case;
 
     fn field<'a>(key: &'a str, value: &'a [u8]) -> Result<Option<(&'a str, &'a [u8])>> {
         Ok(Some((key, value)))
@@ -426,41 +427,36 @@ mod tests {
         delay_one_poll().chain(stream::iter(iter::once(Ok(t))))
     }
 
-    #[test]
-    fn test_decode_chunks_simple() {
+    #[test_case(b"message: hello\n\n", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with LF")]
+    #[test_case(b"message: hello\n\r", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with LF and trailing CR")]
+    #[test_case(b"message: hello\r\n\n", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with CRLF")]
+    #[test_case(b"message: hello\r\n\r", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with CRLF and trailing CR")]
+    #[test_case(b"message: hello\r\r", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with CR")]
+    #[test_case(b"message: hello\r\r\n", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with CR and trailing CRLF")]
+    #[test_case(b"event: test\n\n", event("test", &Map::new()); "determines event name with trailing LF")]
+    #[test_case(b"event: test\nmessage: hello\nto: world\n\n", event( "test", &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}); "parses full event with LF")]
+    #[test_case(b"event: test\rmessage: hello\rto: world\r\r", event( "test", &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}); "parses full event with CR")]
+    #[test_case(b"event: test\r\nmessage: hello\r\nto: world\r\n\n", event( "test", &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}); "parses full event with CRLF")]
+    fn test_decode_chunks_simple(chunk: &[u8], event: Event) {
         use Poll::Ready;
         let waker = noop_waker();
         let mut cx = Context::from_waker(&waker);
 
-        let mut decoded = Decoded::new(one_chunk(b"message: hello\n\n"));
-        assert_eq!(
-            decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
-        );
+        let mut decoded = Decoded::new(one_chunk(chunk));
+        assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(Some(Ok(event))));
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
+    }
 
-        let mut decoded = Decoded::new(one_chunk(b"event: test\n\n"));
-        assert_eq!(
-            decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("test", &Map::new()))))
-        );
+    #[test_case(b":hello\n"; "with LF")]
+    #[test_case(b":hello\r"; "with CR")]
+    #[test_case(b":hello\r\n"; "with CRLF")]
+    fn test_decode_chunks_comments_are_ignored(chunk: &[u8]) {
+        use Poll::Ready;
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let mut decoded = Decoded::new(one_chunk(chunk));
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
-
-        let mut decoded = Decoded::new(one_chunk(b"event: test\nmessage: hello\nto: world\n\n"));
-        assert_eq!(
-            decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event(
-                "test",
-                &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}
-            ))))
-        );
-        assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
-
-        assert_eq!(
-            Decoded::new(one_chunk(b":hello\n")).poll_next_unpin(&mut cx),
-            Ready(None),
-            "comments are ignored"
-        );
     }
 
     #[test]
@@ -496,6 +492,36 @@ mod tests {
             one_chunk(b"message:hell")
                 .chain(one_chunk(b"o\n\nmessage:"))
                 .chain(one_chunk(b"world\n\n")),
+        );
+        assert_eq!(
+            decoded.poll_next_unpin(&mut cx),
+            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+        );
+        assert_eq!(
+            decoded.poll_next_unpin(&mut cx),
+            Ready(Some(Ok(event("", &btreemap! {"message" => &b"world"[..]}))))
+        );
+        assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
+
+        let mut decoded = Decoded::new(
+            one_chunk(b"message:hell")
+                .chain(one_chunk(b"o\r\rmessage:"))
+                .chain(one_chunk(b"world\r\r")),
+        );
+        assert_eq!(
+            decoded.poll_next_unpin(&mut cx),
+            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+        );
+        assert_eq!(
+            decoded.poll_next_unpin(&mut cx),
+            Ready(Some(Ok(event("", &btreemap! {"message" => &b"world"[..]}))))
+        );
+        assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
+
+        let mut decoded = Decoded::new(
+            one_chunk(b"message:hell")
+                .chain(one_chunk(b"o\r\n\nmessage:"))
+                .chain(one_chunk(b"world\r\n\n")),
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
@@ -560,6 +586,23 @@ mod tests {
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
     }
 
+    #[test_case(b"\n\n\n\n" ; "all LFs")]
+    #[test_case(b"\r\r\r\r" ; "all CRs")]
+    #[test_case(b"\r\n\r\n\r\n\r\n" ; "all CRLFs")]
+    fn test_decode_repeated_terminators(bytes: &[u8]) {
+        use Poll::Ready;
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        // spec seems unclear on whether this should actually dispatch empty events, but that seems
+        // unhelpful for all practical purposes
+        let repeated_newlines = one_chunk(bytes);
+        assert_eq!(
+            Decoded::new(repeated_newlines).poll_next_unpin(&mut cx),
+            Ready(None)
+        );
+    }
+
     #[test]
     fn test_decode_edge_cases() {
         use Poll::Ready;
@@ -572,14 +615,6 @@ mod tests {
         let one_empty = one_chunk(b"");
         assert_eq!(
             Decoded::new(one_empty).poll_next_unpin(&mut cx),
-            Ready(None)
-        );
-
-        let repeated_newlines = one_chunk(b"\n\n\n\n");
-        // spec seems unclear on whether this should actually dispatch empty events, but that seems
-        // unhelpful for all practical purposes
-        assert_eq!(
-            Decoded::new(repeated_newlines).poll_next_unpin(&mut cx),
             Ready(None)
         );
 
@@ -651,9 +686,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_decode_one_event() {
-        let stream = one_chunk_from_file("one-event.sse");
+    #[test_case("one-event.sse"; "one-event.sse")]
+    #[test_case("one-event-crlf.sse"; "one-event-crlf.sse")]
+    fn test_decode_one_event(file: &str) {
+        let stream = one_chunk_from_file(file);
         let mut decoded = Decoded::new(stream);
 
         let event = next_event(&mut decoded);
@@ -664,9 +700,10 @@ mod tests {
         assert_eof(decoded);
     }
 
-    #[test]
-    fn test_decode_two_events() {
-        let stream = one_chunk_from_file("two-events.sse");
+    #[test_case("two-events.sse"; "two-events.sse")]
+    #[test_case("two-events-crlf.sse"; "two-events-crlf.sse")]
+    fn test_decode_two_events(file: &str) {
+        let stream = one_chunk_from_file(file);
         let mut decoded = Decoded::new(stream);
 
         let event = next_event(&mut decoded);
@@ -682,9 +719,10 @@ mod tests {
         assert_eof(decoded);
     }
 
-    #[test]
-    fn test_decode_big_event_followed_by_another() {
-        let stream = one_chunk_from_file("big-event-followed-by-another.sse");
+    #[test_case("big-event-followed-by-another.sse"; "big-event-followed-by-another.sse")]
+    #[test_case("big-event-followed-by-another-crlf.sse"; "big-event-followed-by-another-crlf.sse")]
+    fn test_decode_big_event_followed_by_another(file: &str) {
+        let stream = one_chunk_from_file(file);
         let mut decoded = Decoded::new(stream);
 
         let event = next_event(&mut decoded);

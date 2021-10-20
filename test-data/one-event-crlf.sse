@@ -1,0 +1,3 @@
+event:patch
+data:{"data":{"clientSide":true,"clientSideAvailability":{"usingEnvironmentId":true,"usingMobileKey":true},"debugEventsUntilDate":null,"deleted":false,"fallthrough":{"variation":0},"key":"goals.02.featureWithGoals","offVariation":null,"on":false,"prerequisites":[],"rules":[],"salt":"e51f55941194456da34ce93dd39badb1","sel":"a4806819a2b640d3a275b83606956bc4","targets":[],"trackEvents":true,"trackEventsFallthrough":false,"variations":[true,false],"version":52},"path":"/flags/goals.02.featureWithGoals"}
+
