@@ -122,6 +122,9 @@ pub struct Decoded<S> {
     /// buffer for the most-recently received line, pending completion (by a newline terminator) or
     /// extension (by more non-newline bytes)
     incomplete_line: Option<Vec<u8>>,
+    /// flagged if the last character processed as a carriage return; used to help process CRLF
+    /// pairs
+    last_char_was_cr: bool,
     /// the event currently being decoded
     event: Option<Event>,
 }
@@ -132,6 +135,7 @@ impl<S: Stream> Decoded<S> {
             chunk_stream: s.fuse(),
             complete_lines: VecDeque::with_capacity(10),
             incomplete_line: None,
+            last_char_was_cr: false,
             event: None,
         }
     }
@@ -183,8 +187,7 @@ impl<S: Stream> Decoded<S> {
     fn decode_and_buffer_lines(mut self: Pin<&mut Self>, chunk: Bytes) {
         let this = self.as_mut().project();
 
-        // TODO(ch86257) also handle lines ending in \r, \r\n (and EOF?)
-        let mut lines = chunk.split(|&b| b == b'\n');
+        let mut lines = chunk.split_inclusive(|&b| b == b'\n' || b == b'\r');
 
         // The first and last elements in this split are special. The spec requires lines to be
         // terminated. But lines may span chunks, so:
@@ -202,7 +205,20 @@ impl<S: Stream> Decoded<S> {
                 logify(incomplete_line),
                 logify(line)
             );
-            incomplete_line.extend_from_slice(line);
+
+            *this.last_char_was_cr = false;
+            if !line.is_empty() {
+                // Checking the last character handles lines where the last character is a
+                // terminator, but also where the entire line is a terminator.
+                match line.last().unwrap() {
+                    b'\r' => {
+                        incomplete_line.extend_from_slice(&line[..line.len() - 1]);
+                        *this.last_char_was_cr = true;
+                    }
+                    b'\n' => incomplete_line.extend_from_slice(&line[..line.len() - 1]),
+                    _ => incomplete_line.extend_from_slice(&line),
+                };
+            }
         }
 
         let mut lines = lines.peekable();
@@ -216,12 +232,29 @@ impl<S: Stream> Decoded<S> {
                 this.complete_lines.push_back(actually_complete_line);
             }
 
-            if lines.peek().is_some() {
-                // this line is not the last
-                this.complete_lines.push_back(line.to_vec());
+            if *this.last_char_was_cr && line == &[b'\n'] {
+                // This is a continuation of a \r\n pair, so we can ignore this line. We do need to
+                // reset our flag though.
+                *this.last_char_was_cr = false;
+                continue;
+            }
+
+            *this.last_char_was_cr = false;
+            if line.ends_with(&[b'\r']) {
+                this.complete_lines
+                    .push_back(line[..line.len() - 1].to_vec());
+                *this.last_char_was_cr = true;
+            } else if line.ends_with(&[b'\n']) {
+                // This isn't a continuation, but rather a line ending with a LF terminator.
+                this.complete_lines
+                    .push_back(line[..line.len() - 1].to_vec());
             } else if line.is_empty() {
                 // this is the last line and it's empty, no need to buffer it
                 trace!("chunk ended with a line terminator");
+            } else if lines.peek().is_some() {
+                // this line isn't the last and we know from previous checks it doesn't end in a
+                // terminator, so we can consider it complete
+                this.complete_lines.push_back(line.to_vec());
             } else {
                 // last line needs to be buffered as it may be incomplete
                 trace!("buffering incomplete line: {:?}", logify(line));
