@@ -216,7 +216,7 @@ impl<S: Stream> Decoded<S> {
                         *this.last_char_was_cr = true;
                     }
                     b'\n' => incomplete_line.extend_from_slice(&line[..line.len() - 1]),
-                    _ => incomplete_line.extend_from_slice(&line),
+                    _ => incomplete_line.extend_from_slice(line),
                 };
             }
         }
@@ -232,7 +232,7 @@ impl<S: Stream> Decoded<S> {
                 this.complete_lines.push_back(actually_complete_line);
             }
 
-            if *this.last_char_was_cr && line == &[b'\n'] {
+            if *this.last_char_was_cr && line == [b'\n'] {
                 // This is a continuation of a \r\n pair, so we can ignore this line. We do need to
                 // reset our flag though.
                 *this.last_char_was_cr = false;
