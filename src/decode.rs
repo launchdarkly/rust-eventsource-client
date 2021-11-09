@@ -146,11 +146,13 @@ impl<S: Stream> Decoded<S> {
     //
     // Returns the event for dispatch if it is complete.
     fn parse_complete_lines_into_event(mut self: Pin<&mut Self>) -> Result<Option<Event>> {
+        trace!("***** we are going to start the parsing process");
         let mut seen_empty_line = false;
 
         let this = self.as_mut().project();
 
         while let Some(line) = this.complete_lines.pop_front() {
+            trace!("***** initial line received is {:?})", line);
             if line.is_empty() {
                 seen_empty_line = true;
                 break;
@@ -305,7 +307,10 @@ where
                     trace!("decoder got a chunk: {:?}", logify(&c));
                     c
                 }
-                Some(Err(e)) => return Poll::Ready(Some(Err(e))),
+                Some(Err(e)) => {
+                    trace!("{:?}", e);
+                    return Poll::Ready(Some(Err(e)));
+                }
                 None => {
                     return match this.incomplete_line {
                         None => {

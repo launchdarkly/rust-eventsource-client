@@ -21,9 +21,13 @@ tokio = { version = "1.2.0", features = ["time"] }
 [dev-dependencies]
 env_logger = "0.7.1"
 maplit = "1.0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.39"
 simplelog = "0.5.3"
 tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
-test-case = "1.2.0"
+actix = "0.12.0"
+actix-web = "4.0.0-beta.10"
+test-case = "1.2.1"
 
 [features]
 default = ["rustls"]
@@ -31,4 +35,8 @@ rustls = ["hyper-rustls", "hyper/http2"]
 
 [[example]]
 name = "tail"
+required-features = ["rustls"]
+
+[[example]]
+name = "actix-example"
 required-features = ["rustls"]
