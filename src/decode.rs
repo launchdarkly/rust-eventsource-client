@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap as Map, VecDeque},
+    collections::VecDeque,
     pin::Pin,
     str::from_utf8,
     task::{Context, Poll},
@@ -19,47 +19,36 @@ use super::error::{Error, Result};
 #[derive(Clone, Debug, PartialEq)]
 // TODO can we make this require less copying?
 pub struct Event {
+    // TODO(mmk) If this is empty at dispatch time, we need to set this to message
     pub event_type: String,
-    fields: Map<String, Vec<u8>>,
+    // TODO(mmk) We don't dispatch if there is no data
+    pub data: Vec<u8>,
+    // TODO(mmk) This should optional
+    pub id: Vec<u8>,
 }
 
 impl Event {
     fn new() -> Event {
         Event {
             event_type: "".to_string(),
-            fields: Map::new(),
+            data: Vec::new(),
+            id: Vec::new(),
         }
     }
 
-    pub fn field(&self, name: &str) -> Option<&[u8]> {
-        self.fields.get(name).map(|buf| buf.as_slice())
+    pub fn append_data(&mut self, value: &[u8]) {
+        self.data.extend(value.to_vec());
+        self.data.push(b'\n');
     }
 
-    // Set the named field to the given value, or append to any existing value, as required by the
-    // spec. Will append a newline each time.
-    fn append_field(&mut self, name: &str, value: &[u8]) {
-        let existing = match self.fields.get_mut(name) {
-            None => {
-                let empty = Vec::with_capacity(value.len() + 1);
-                self.fields.insert(name.into(), empty);
-                self.fields.get_mut(name).unwrap()
-            }
-            Some(nonempty) => {
-                nonempty.reserve(value.len() + 1);
-                nonempty
-            }
-        };
-
-        existing.extend(value);
-        existing.push(b'\n');
+    pub fn set_id(&mut self, value: &[u8]) {
+        // TODO(mmk) If value has a null code point, ignore this assignment
+        // https://github.com/whatwg/html/issues/689
+        self.id = value.to_vec();
     }
-}
 
-impl std::ops::Index<&str> for Event {
-    type Output = [u8];
-
-    fn index(&self, name: &str) -> &[u8] {
-        &self.fields[name]
+    fn to_dispatch_event(&mut self) -> () {
+        self.data.truncate(self.data.len() - 1);
     }
 }
 
@@ -165,19 +154,29 @@ impl<S: Stream> Decoded<S> {
                     event.event_type = from_utf8(value)
                         .map_err(Error::InvalidEventType)?
                         .to_string();
-                } else {
-                    event.append_field(key, value);
+                } else if key == "data" {
+                    event.append_data(value);
+                } else if key == "id" {
+                    event.set_id(value);
                 }
             }
         }
 
         if seen_empty_line {
             let event = this.event.take();
+
             trace!(
                 "seen empty line, event is {:?})",
-                event.as_ref().map(|event| &event.event_type)
+                this.event.as_ref().map(|event| &event.event_type)
             );
-            Ok(event)
+
+            match event {
+                Some(mut evt) => {
+                    evt.to_dispatch_event();
+                    Ok(Some(evt))
+                }
+                _ => Ok(None),
+            }
         } else {
             trace!("processed all complete lines but event not yet complete");
             Ok(None)
@@ -215,15 +214,22 @@ impl<S: Stream> Decoded<S> {
                 match line.last().unwrap() {
                     b'\r' => {
                         incomplete_line.extend_from_slice(&line[..line.len() - 1]);
+                        let il = this.incomplete_line.take();
+                        this.complete_lines.push_back(il.unwrap());
                         *this.last_char_was_cr = true;
                     }
-                    b'\n' => incomplete_line.extend_from_slice(&line[..line.len() - 1]),
+                    b'\n' => {
+                        incomplete_line.extend_from_slice(&line[..line.len() - 1]);
+                        let il = this.incomplete_line.take();
+                        this.complete_lines.push_back(il.unwrap());
+                    }
                     _ => incomplete_line.extend_from_slice(line),
                 };
             }
         }
 
         let mut lines = lines.peekable();
+        // hello\n
         while let Some(line) = lines.next() {
             if let Some(actually_complete_line) = this.incomplete_line.take() {
                 // we saw the next line, so the previous one must have been complete after all
@@ -399,17 +405,15 @@ mod tests {
         Bytes::copy_from_slice(bytes)
     }
 
-    fn event(typ: &str, fields: &Map<&str, &[u8]>) -> Event {
+    fn event(typ: &str, data: &[u8], id: &[u8]) -> Event {
         let mut evt = Event::new();
+        evt.data = data.to_vec();
+        evt.id = id.to_vec();
         evt.event_type = typ.to_string();
-        for (k, v) in fields {
-            evt.append_field(k, v);
-        }
         evt
     }
 
     use futures::{stream, task::noop_waker, Stream};
-    use maplit::btreemap;
 
     fn one_chunk(bytes: &[u8]) -> impl Stream<Item = Result<Bytes>> + Unpin {
         let chunk = chunk(bytes);
@@ -432,16 +436,13 @@ mod tests {
         delay_one_poll().chain(stream::iter(iter::once(Ok(t))))
     }
 
-    #[test_case(b"message: hello\n\n", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with LF")]
-    #[test_case(b"message: hello\n\r", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with LF and trailing CR")]
-    #[test_case(b"message: hello\r\n\n", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with CRLF")]
-    #[test_case(b"message: hello\r\n\r", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with CRLF and trailing CR")]
-    #[test_case(b"message: hello\r\r", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with CR")]
-    #[test_case(b"message: hello\r\r\n", event("", &btreemap! {"message" => &b"hello"[..]}); "parses event body with CR and trailing CRLF")]
-    #[test_case(b"event: test\n\n", event("test", &Map::new()); "determines event name with trailing LF")]
-    #[test_case(b"event: test\nmessage: hello\nto: world\n\n", event( "test", &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}); "parses full event with LF")]
-    #[test_case(b"event: test\rmessage: hello\rto: world\r\r", event( "test", &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}); "parses full event with CR")]
-    #[test_case(b"event: test\r\nmessage: hello\r\nto: world\r\n\n", event( "test", &btreemap! {"message" => &b"hello"[..], "to" => &b"world"[..]}); "parses full event with CRLF")]
+    #[test_case(b"data: hello\n\n", event("", &b"hello"[..], &b""[..]); "parses event body with LF")]
+    #[test_case(b"data: hello\n\r", event("", &b"hello"[..], &b""[..]); "parses event body with LF and trailing CR")]
+    #[test_case(b"data: hello\r\n\n", event("", &b"hello"[..], &b""[..]); "parses event body with CRLF")]
+    #[test_case(b"data: hello\r\n\r", event("", &b"hello"[..], &b""[..]); "parses event body with CRLF and trailing CR")]
+    #[test_case(b"data: hello\r\r", event("", &b"hello"[..], &b""[..]); "parses event body with CR")]
+    #[test_case(b"data: hello\r\r\n", event("", &b"hello"[..], &b""[..]); "parses event body with CR and trailing CRLF")]
+    // #[test_case(b"event: test\n\n", event("test", &b""[..], &b""[..]); "determines event name with trailing LF")] TODO(mmk) This test shouldn't even dispatch something so that's wrong!
     fn test_decode_chunks_simple(chunk: &[u8], event: Event) {
         use Poll::Ready;
         let waker = noop_waker();
@@ -470,71 +471,71 @@ mod tests {
         let waker = noop_waker();
         let mut cx = Context::from_waker(&waker);
 
-        let mut decoded = Decoded::new(one_chunk(b"message:").chain(one_chunk(b"hello\n\n")));
+        let mut decoded = Decoded::new(one_chunk(b"data:").chain(one_chunk(b"hello\n\n")));
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
-        let mut decoded = Decoded::new(one_chunk(b"message:hell").chain(one_chunk(b"o\n\n")));
+        let mut decoded = Decoded::new(one_chunk(b"data:hell").chain(one_chunk(b"o\n\n")));
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
         let mut decoded =
-            Decoded::new(one_chunk(b"message:").chain(delay_one_then(chunk(b"hello\n\n"))));
+            Decoded::new(one_chunk(b"data:").chain(delay_one_then(chunk(b"hello\n\n"))));
         assert_eq!(decoded.poll_next_unpin(&mut cx), Pending);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
         let mut decoded = Decoded::new(
-            one_chunk(b"message:hell")
-                .chain(one_chunk(b"o\n\nmessage:"))
+            one_chunk(b"data:hell")
+                .chain(one_chunk(b"o\n\ndata:"))
                 .chain(one_chunk(b"world\n\n")),
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"world"[..]}))))
+            Ready(Some(Ok(event("", &b"world"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
         let mut decoded = Decoded::new(
-            one_chunk(b"message:hell")
-                .chain(one_chunk(b"o\r\rmessage:"))
+            one_chunk(b"data:hell")
+                .chain(one_chunk(b"o\r\rdata:"))
                 .chain(one_chunk(b"world\r\r")),
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"world"[..]}))))
+            Ready(Some(Ok(event("", &b"world"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
         let mut decoded = Decoded::new(
-            one_chunk(b"message:hell")
-                .chain(one_chunk(b"o\r\n\nmessage:"))
+            one_chunk(b"data:hell")
+                .chain(one_chunk(b"o\r\n\ndata:"))
                 .chain(one_chunk(b"world\r\n\n")),
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"world"[..]}))))
+            Ready(Some(Ok(event("", &b"world"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
     }
@@ -545,28 +546,22 @@ mod tests {
         let waker = noop_waker();
         let mut cx = Context::from_waker(&waker);
 
-        let empty_after_incomplete = one_chunk(b"message:foo")
+        let empty_after_incomplete = one_chunk(b"data:foo")
             .chain(one_chunk(b""))
             .chain(one_chunk(b"baz\n\n"));
         let mut decoded = Decoded::new(empty_after_incomplete);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event(
-                "",
-                &btreemap! {"message" => &b"foobaz"[..]}
-            ))))
+            Ready(Some(Ok(event("", &b"foobaz"[..], &b""[..]))))
         );
 
-        let incomplete_after_incomplete = one_chunk(b"message:foo")
+        let incomplete_after_incomplete = one_chunk(b"data:foo")
             .chain(one_chunk(b"bar"))
             .chain(one_chunk(b"baz\n\n"));
         let mut decoded = Decoded::new(incomplete_after_incomplete);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event(
-                "",
-                &btreemap! {"message" => &b"foobarbaz"[..]}
-            ))))
+            Ready(Some(Ok(event("", &b"foobarbaz"[..], &b""[..]))))
         );
     }
 
@@ -583,10 +578,7 @@ mod tests {
         assert_eq!(decoded.poll_next_unpin(&mut cx), Pending);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event(
-                "",
-                &btreemap! {"data" => &b"hello\nworld"[..]}
-            ))))
+            Ready(Some(Ok(event("", &b"hello\nworld"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
     }
@@ -631,7 +623,7 @@ mod tests {
         );
 
         assert_eq!(
-            Decoded::new(one_chunk(b"message: hello\n")).poll_next_unpin(&mut cx),
+            Decoded::new(one_chunk(b"data: hello\n")).poll_next_unpin(&mut cx),
             Ready(None)
         );
 
@@ -647,10 +639,9 @@ mod tests {
             res => panic!("expected HttpStream error, got {:?}", res),
         }
 
-        let interrupted_after_field =
-            one_chunk(b"message: hello\n").chain(stream::poll_fn(|_cx| {
-                Ready(Some(Err(dummy_stream_error("read error"))))
-            }));
+        let interrupted_after_field = one_chunk(b"data: hello\n").chain(stream::poll_fn(|_cx| {
+            Ready(Some(Err(dummy_stream_error("read error"))))
+        }));
         match Decoded::new(interrupted_after_field).poll_next_unpin(&mut cx) {
             Ready(Some(Err(err))) => {
                 assert!(err.is_http_stream_error());
@@ -660,14 +651,13 @@ mod tests {
             res => panic!("expected HttpStream error, got {:?}", res),
         }
 
-        let interrupted_after_event =
-            one_chunk(b"message: hello\n\n").chain(stream::poll_fn(|_cx| {
-                Ready(Some(Err(dummy_stream_error("read error"))))
-            }));
+        let interrupted_after_event = one_chunk(b"data: hello\n\n").chain(stream::poll_fn(|_cx| {
+            Ready(Some(Err(dummy_stream_error("read error"))))
+        }));
         let mut decoded = Decoded::new(interrupted_after_event);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &btreemap! {"message" => &b"hello"[..]}))))
+            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
         );
         match decoded.poll_next_unpin(&mut cx) {
             Ready(Some(Err(err))) => {
@@ -714,12 +704,12 @@ mod tests {
         let event = next_event(&mut decoded);
         assert_eq!(event.event_type, "one");
         let data = event_data(&event).expect("event data should parse");
-        assert_eq!(data, "One\n");
+        assert_eq!(data, "One");
 
         let event = next_event(&mut decoded);
         assert_eq!(event.event_type, "two");
         let data = event_data(&event).expect("event data should parse");
-        assert_eq!(data, "Two\n");
+        assert_eq!(data, "Two");
 
         assert_eof(decoded);
     }
@@ -751,7 +741,7 @@ mod tests {
     }
 
     fn event_data(event: &Event) -> std::result::Result<&str, String> {
-        let data = event.field("data").ok_or("no data field")?;
+        let data = &event.data;
         from_utf8(data).map_err(|e| format!("invalid UTF-8: {}", e))
     }
 
