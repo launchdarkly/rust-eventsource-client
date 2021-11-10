@@ -47,8 +47,24 @@ impl Event {
         self.id = value.to_vec();
     }
 
-    fn to_dispatch_event(&mut self) -> () {
-        self.data.truncate(self.data.len() - 1);
+    fn to_dispatch_event(self) -> Option<Self> {
+        if self.data.is_empty() {
+            return None;
+        }
+
+        let event_type = match self.event_type.is_empty() {
+            true => String::from("message"),
+            false => self.event_type,
+        };
+
+        let mut data = self.data;
+        data.truncate(data.len() - 1);
+
+        Some(Event {
+            event_type,
+            data,
+            id: self.id,
+        })
     }
 }
 
@@ -135,16 +151,16 @@ impl<S: Stream> Decoded<S> {
     //
     // Returns the event for dispatch if it is complete.
     fn parse_complete_lines_into_event(mut self: Pin<&mut Self>) -> Result<Option<Event>> {
-        trace!("***** we are going to start the parsing process");
         let mut seen_empty_line = false;
 
         let this = self.as_mut().project();
 
         while let Some(line) = this.complete_lines.pop_front() {
-            trace!("***** initial line received is {:?})", line);
-            if line.is_empty() {
+            if line.is_empty() && this.event.is_some() {
                 seen_empty_line = true;
                 break;
+            } else if line.is_empty() {
+                continue;
             }
 
             if let Some((key, value)) = parse_field(&line)? {
@@ -170,13 +186,11 @@ impl<S: Stream> Decoded<S> {
                 this.event.as_ref().map(|event| &event.event_type)
             );
 
-            match event {
-                Some(mut evt) => {
-                    evt.to_dispatch_event();
-                    Ok(Some(evt))
-                }
-                _ => Ok(None),
+            if let Some(event) = event {
+                return Ok(event.to_dispatch_event());
             }
+
+            return Ok(None);
         } else {
             trace!("processed all complete lines but event not yet complete");
             Ok(None)
@@ -436,13 +450,39 @@ mod tests {
         delay_one_poll().chain(stream::iter(iter::once(Ok(t))))
     }
 
-    #[test_case(b"data: hello\n\n", event("", &b"hello"[..], &b""[..]); "parses event body with LF")]
-    #[test_case(b"data: hello\n\r", event("", &b"hello"[..], &b""[..]); "parses event body with LF and trailing CR")]
-    #[test_case(b"data: hello\r\n\n", event("", &b"hello"[..], &b""[..]); "parses event body with CRLF")]
-    #[test_case(b"data: hello\r\n\r", event("", &b"hello"[..], &b""[..]); "parses event body with CRLF and trailing CR")]
-    #[test_case(b"data: hello\r\r", event("", &b"hello"[..], &b""[..]); "parses event body with CR")]
-    #[test_case(b"data: hello\r\r\n", event("", &b"hello"[..], &b""[..]); "parses event body with CR and trailing CRLF")]
-    // #[test_case(b"event: test\n\n", event("test", &b""[..], &b""[..]); "determines event name with trailing LF")] TODO(mmk) This test shouldn't even dispatch something so that's wrong!
+    #[test]
+    fn test_event_without_data_yields_no_event() {
+        use Poll::Ready;
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let mut decoded = Decoded::new(one_chunk(b"id: abc\n\n"));
+        assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
+    }
+
+    #[test_case(b"event: add\ndata: hello\n\n", "add".into())]
+    #[test_case(b"data: hello\n\n", "message".into())]
+    fn test_event_can_parse_type_correctly(chunk: &[u8], event_type: String) {
+        use Poll::Ready;
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let mut decoded = Decoded::new(one_chunk(chunk));
+        let poll = decoded.poll_next_unpin(&mut cx);
+
+        if let Ready(Some(Ok(event))) = poll {
+            assert_eq!(event_type, event.event_type);
+        } else {
+            panic!("Event should have been received")
+        }
+    }
+
+    #[test_case(b"data: hello\n\n", event("message", &b"hello"[..], &b""[..]); "parses event body with LF")]
+    #[test_case(b"data: hello\n\r", event("message", &b"hello"[..], &b""[..]); "parses event body with LF and trailing CR")]
+    #[test_case(b"data: hello\r\n\n", event("message", &b"hello"[..], &b""[..]); "parses event body with CRLF")]
+    #[test_case(b"data: hello\r\n\r", event("message", &b"hello"[..], &b""[..]); "parses event body with CRLF and trailing CR")]
+    #[test_case(b"data: hello\r\r", event("message", &b"hello"[..], &b""[..]); "parses event body with CR")]
+    #[test_case(b"data: hello\r\r\n", event("message", &b"hello"[..], &b""[..]); "parses event body with CR and trailing CRLF")]
     fn test_decode_chunks_simple(chunk: &[u8], event: Event) {
         use Poll::Ready;
         let waker = noop_waker();
@@ -474,14 +514,14 @@ mod tests {
         let mut decoded = Decoded::new(one_chunk(b"data:").chain(one_chunk(b"hello\n\n")));
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
         let mut decoded = Decoded::new(one_chunk(b"data:hell").chain(one_chunk(b"o\n\n")));
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
@@ -490,7 +530,7 @@ mod tests {
         assert_eq!(decoded.poll_next_unpin(&mut cx), Pending);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
@@ -501,11 +541,11 @@ mod tests {
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"world"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"world"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
@@ -516,11 +556,11 @@ mod tests {
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"world"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"world"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
 
@@ -531,11 +571,11 @@ mod tests {
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"hello"[..], &b""[..]))))
         );
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"world"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"world"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
     }
@@ -552,7 +592,7 @@ mod tests {
         let mut decoded = Decoded::new(empty_after_incomplete);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"foobaz"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"foobaz"[..], &b""[..]))))
         );
 
         let incomplete_after_incomplete = one_chunk(b"data:foo")
@@ -561,7 +601,7 @@ mod tests {
         let mut decoded = Decoded::new(incomplete_after_incomplete);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"foobarbaz"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"foobarbaz"[..], &b""[..]))))
         );
     }
 
@@ -578,7 +618,7 @@ mod tests {
         assert_eq!(decoded.poll_next_unpin(&mut cx), Pending);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"hello\nworld"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"hello\nworld"[..], &b""[..]))))
         );
         assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
     }
@@ -598,6 +638,22 @@ mod tests {
             Decoded::new(repeated_newlines).poll_next_unpin(&mut cx),
             Ready(None)
         );
+    }
+
+    #[test]
+    fn test_decode_extra_terminators_between_events() {
+        use Poll::Ready;
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let bytes = b"data: abc\n\n\ndata: def\n\n";
+
+        let mut decoded = Decoded::new(one_chunk(bytes));
+        let expected1 = event("message", &b"abc"[..], &b""[..]);
+        let expected2 = event("message", &b"def"[..], &b""[..]);
+        assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(Some(Ok(expected1))));
+        assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(Some(Ok(expected2))));
+        assert_eq!(decoded.poll_next_unpin(&mut cx), Ready(None));
     }
 
     #[test]
@@ -657,7 +713,7 @@ mod tests {
         let mut decoded = Decoded::new(interrupted_after_event);
         assert_eq!(
             decoded.poll_next_unpin(&mut cx),
-            Ready(Some(Ok(event("", &b"hello"[..], &b""[..]))))
+            Ready(Some(Ok(event("message", &b"hello"[..], &b""[..]))))
         );
         match decoded.poll_next_unpin(&mut cx) {
             Ready(Some(Err(err))) => {

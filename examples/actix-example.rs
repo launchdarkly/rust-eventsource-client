@@ -43,32 +43,40 @@ struct Config {
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "kind")]
-enum EventType<'a> {
+enum EventType {
     #[serde(rename = "hello")]
     Hello,
     #[serde(rename = "event")]
-    Event { event: Event<'a> },
+    Event { event: Event },
     #[serde(rename = "comment")]
     Comment { comment: String },
     #[serde(rename = "error")]
     Error { error: String },
 }
 
+impl From<es::Event> for EventType {
+    fn from(event: es::Event) -> Self {
+        Self::Event {
+            event: Event {
+                event_type: event.event_type,
+                data: String::from_utf8(event.data.to_vec()).unwrap(),
+                id: String::from_utf8(event.id.to_vec()).unwrap(),
+            },
+        }
+    }
+}
+
 #[derive(Serialize, Debug)]
-struct Event<'a> {
+struct Event {
     #[serde(rename = "type")]
     event_type: String,
-    data: Option<String>,
-    id: Option<&'a [u8]>,
+    data: String,
+    id: String,
 }
 
 async fn status() -> impl Responder {
     web::Json(Status {
-        capabilities: vec![
-            // "headers".into(),
-            "last-event-id".into(),
-            "read-timeout".into(),
-        ],
+        capabilities: vec![],
     })
 }
 
@@ -98,16 +106,7 @@ async fn stream(config: web::Json<Config>) -> HttpResponse {
         loop {
             match stream.try_next().await {
                 Ok(Some(event)) => {
-                    let event_type = EventType::Event {
-                        event: Event {
-                            event_type: event.event_type.clone(),
-                            data: event
-                                .field("data")
-                                .map(|data| String::from_utf8(data.to_vec()).unwrap()),
-                            id: event.field("id"),
-                        },
-                    };
-
+                    let event_type: EventType = event.into();
                     let json = format!("{}\n", serde_json::to_string(&event_type).unwrap());
                     if tx
                         .try_send(Ok(web::Bytes::copy_from_slice(json.as_bytes())))

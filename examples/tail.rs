@@ -43,7 +43,7 @@ fn tail_events(client: es::Client<es::HttpsConnector>) -> impl Stream<Item = Res
             println!(
                 "got an event: {}\n{}",
                 event.event_type,
-                from_utf8(event.field("data").unwrap_or_default()).unwrap_or_default()
+                from_utf8(&event.data).unwrap_or_default()
             )
         })
         .map_err(|err| eprintln!("error streaming events: {:?}", err))
