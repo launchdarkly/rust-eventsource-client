@@ -12,6 +12,7 @@ use hyper::{
     body::{Bytes, HttpBody},
     client::{connect::Connect, ResponseFuture},
     header::HeaderMap,
+    header::HeaderValue,
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
@@ -114,9 +115,14 @@ impl Client<()> {
     /// [`.stream()`]: #method.stream
     pub fn for_url(url: &str) -> Result<ClientBuilder> {
         let url = url.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
+
+        let mut header_map = HeaderMap::new();
+        header_map.insert("Accept", HeaderValue::from_static("text/event-stream"));
+        header_map.insert("Cache-Control", HeaderValue::from_static("no-cache"));
+
         Ok(ClientBuilder {
             url,
-            headers: HeaderMap::new(),
+            headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
         })
     }
