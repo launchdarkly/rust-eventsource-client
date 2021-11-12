@@ -9,7 +9,7 @@ use std::{
 
 use futures::{ready, Stream};
 use hyper::{
-    body::{Bytes, HttpBody},
+    body::HttpBody,
     client::{connect::Connect, ResponseFuture},
     header::HeaderMap,
     header::HeaderValue,
@@ -21,8 +21,9 @@ use log::{debug, info, trace, warn};
 use pin_project::pin_project;
 use tokio::time::Sleep;
 
+use crate::{decode::EventParser, Event};
+
 use super::config::ReconnectOptions;
-use super::decode::Decoded;
 use super::error::{Error, Result};
 
 pub use hyper::client::HttpConnector;
@@ -128,7 +129,7 @@ impl Client<()> {
     }
 }
 
-pub type EventStream<C> = Decoded<ReconnectingRequest<C>>;
+pub type EventStream<C> = ReconnectingRequest<C>;
 
 impl<C> Client<C> {
     /// Connect to the server and begin consuming the stream. Produces a
@@ -142,10 +143,7 @@ impl<C> Client<C> {
     where
         C: Connect + Clone + Send + Sync + 'static,
     {
-        Decoded::new(ReconnectingRequest::new(
-            self.http.clone(),
-            self.request_props.clone(),
-        ))
+        ReconnectingRequest::new(self.http.clone(), self.request_props.clone())
     }
 }
 
@@ -157,6 +155,7 @@ pub struct ReconnectingRequest<C> {
     #[pin]
     state: State,
     next_reconnect_delay: Duration,
+    event_parser: EventParser,
 }
 
 #[allow(clippy::large_enum_variant)] // false positive
@@ -198,6 +197,7 @@ impl<C> ReconnectingRequest<C> {
             http,
             state: State::New,
             next_reconnect_delay: reconnect_delay,
+            event_parser: EventParser::new(),
         }
     }
 }
@@ -255,15 +255,20 @@ impl<C> Stream for ReconnectingRequest<C>
 where
     C: Connect + Clone + Send + Sync + 'static,
 {
-    type Item = Result<Bytes>;
+    type Item = Result<Event>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         trace!("ReconnectingRequest::poll({:?})", &self.state);
 
         loop {
-            trace!("ReconnectingRequest::poll loop({:?})", &self.state);
+            let this = self.as_mut().project();
+            if let Some(event) = this.event_parser.get_event() {
+                return Poll::Ready(Some(Ok(event)));
+            }
 
-            let state = self.as_mut().project().state.project();
+            trace!("ReconnectingRequest::poll loop({:?})", &this.state);
+
+            let state = this.state.project();
             let new_state = match state {
                 // New immediately transitions to Connecting, and exists only
                 // to ensure that we only connect when polled.
@@ -301,21 +306,14 @@ where
                 },
                 StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
                     Some(Ok(result)) => {
-                        return Poll::Ready(Some(Ok(result)));
+                        this.event_parser.process_bytes(result)?;
+                        continue;
                     }
-                    res => {
-                        // reconnect
-                        if self.props.reconnect_opts.reconnect {
-                            State::WaitingToReconnect(delay(
-                                self.as_mut().backoff(),
-                                "reconnecting",
-                            ))
-                        } else {
-                            return Poll::Ready(
-                                res.map(|r| r.map_err(|e| Error::HttpStream(Box::new(e)))),
-                            );
-                        }
+                    _ if self.props.reconnect_opts.reconnect => {
+                        State::WaitingToReconnect(delay(self.as_mut().backoff(), "reconnecting"))
                     }
+                    Some(Err(e)) => return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e))))),
+                    None => return Poll::Ready(None),
                 },
                 StateProj::WaitingToReconnect(delay) => {
                     ready!(delay.poll(cx));
