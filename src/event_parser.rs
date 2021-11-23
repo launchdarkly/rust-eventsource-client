@@ -33,7 +33,7 @@ impl Event {
         self.id = value.to_vec();
     }
 
-    fn to_dispatch_event(self) -> Option<Self> {
+    fn format_for_dispatch(self) -> Option<Self> {
         if self.data.is_empty() {
             return None;
         }
@@ -193,7 +193,7 @@ impl EventParser {
                 );
 
                 if let Some(event) = event {
-                    if let Some(dispatch_event) = event.to_dispatch_event() {
+                    if let Some(dispatch_event) = event.format_for_dispatch() {
                         self.events.push_back(dispatch_event);
                     }
                 }
