@@ -7,13 +7,9 @@ use pin_project::pin_project;
 use super::error::{Error, Result};
 
 #[derive(Clone, Debug, PartialEq)]
-// TODO can we make this require less copying?
 pub struct Event {
-    // TODO(mmk) If this is empty at dispatch time, we need to set this to message
     pub event_type: String,
-    // TODO(mmk) We don't dispatch if there is no data
     pub data: Vec<u8>,
-    // TODO(mmk) This should optional
     pub id: Vec<u8>,
 }
 
@@ -196,7 +192,6 @@ impl EventParser {
                     self.event.as_ref().map(|event| &event.event_type)
                 );
 
-                // TODO(mmk) Can we simplify this?
                 if let Some(event) = event {
                     if let Some(dispatch_event) = event.to_dispatch_event() {
                         self.events.push_back(dispatch_event);
