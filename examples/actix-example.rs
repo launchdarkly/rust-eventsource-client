@@ -1,9 +1,10 @@
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::rt::task::JoinHandle;
+use actix_web::{guard, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use eventsource_client as es;
-use futures::channel::mpsc::channel;
 use futures::TryStreamExt;
 use serde::{self, Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 #[derive(Serialize)]
@@ -14,8 +15,10 @@ struct Status {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct Config {
-    /// The URL of the SSE endpoint created by the test harness.
-    url: String,
+    /// The URL of an SSE endpoint created by the test harness.
+    stream_url: String,
+    /// The URL of a callback endpoint created by the test harness .
+    callback_url: String,
     /// A string describing the current test, if desired for logging.
     tag: Option<String>,
     /// An optional integer specifying the initial reconnection delay parameter, in
@@ -44,14 +47,8 @@ struct Config {
 #[derive(Serialize, Debug)]
 #[serde(tag = "kind")]
 enum EventType {
-    #[serde(rename = "hello")]
-    Hello,
     #[serde(rename = "event")]
     Event { event: Event },
-    #[serde(rename = "comment")]
-    Comment { comment: String },
-    #[serde(rename = "error")]
-    Error { error: String },
 }
 
 impl From<es::Event> for EventType {
@@ -76,70 +73,114 @@ struct Event {
 
 async fn status() -> impl Responder {
     web::Json(Status {
-        capabilities: vec![],
+        capabilities: vec!["last-event-id".to_string()],
     })
 }
 
-async fn stream(config: web::Json<Config>) -> HttpResponse {
-    let client_builder = es::Client::for_url(&config.url).unwrap();
-    let mut reconnect_options = es::ReconnectOptions::reconnect(false);
+async fn stream(
+    req: HttpRequest,
+    config: web::Json<Config>,
+    app_state: web::Data<AppState>,
+) -> HttpResponse {
+    let mut client_builder = es::Client::for_url(&config.stream_url).unwrap();
+    let mut reconnect_options = es::ReconnectOptions::reconnect(true);
+
     if let Some(delay_ms) = config.initial_delay_ms {
         reconnect_options = reconnect_options.delay(Duration::from_millis(delay_ms));
     }
+
+    // TODO(mmk) This is really supposed to be part of the client interface I believe
+    if let Some(last_event_id) = &config.last_event_id {
+        client_builder = client_builder
+            .header("last-event-id", &last_event_id)
+            .unwrap();
+    }
+
     let client = client_builder.reconnect(reconnect_options.build()).build();
 
-    // TODO(mmk) Do we want to change this to be unbounded?
-    let (mut tx, rx) = channel::<Result<web::Bytes, actix_web::Error>>(100);
-    actix_web::rt::spawn(async move {
-        let hello = EventType::Hello;
-        let hello_json = format!("{}\n", serde_json::to_string(&hello).unwrap());
-        if tx
-            .try_send(Ok(web::Bytes::copy_from_slice(hello_json.as_bytes())))
-            .is_err()
-        {
-            eprintln!("we couldn't even say hello");
-            return;
-        };
-
+    let handle = actix_web::rt::spawn(async move {
         let mut stream = Box::pin(client.stream());
+        let mut callback_counter = 0;
+        let callback_url = &config.callback_url;
+        let client = reqwest::Client::new();
 
         loop {
             match stream.try_next().await {
                 Ok(Some(event)) => {
                     let event_type: EventType = event.into();
                     let json = format!("{}\n", serde_json::to_string(&event_type).unwrap());
-                    if tx
-                        .try_send(Ok(web::Bytes::copy_from_slice(json.as_bytes())))
-                        .is_err()
-                    {
-                        println!("we failed to send something back");
-                        return;
-                    };
+                    client
+                        .post(format!("{}/{}", callback_url, callback_counter))
+                        .body(json)
+                        .send()
+                        .await
+                        .unwrap();
+                    callback_counter += 1;
                 }
-                Ok(None) => {
-                    eprintln!("Received nothing");
-                    break;
-                }
-                Err(e) => {
-                    eprintln!("We had a failure on the stream {:?}", e);
-                    break;
-                }
+                Ok(None) => break,
+                Err(_) => break,
             };
         }
-
-        tx.close_channel();
     });
 
-    HttpResponse::Ok().streaming(rx)
+    let mut counter = app_state.counter.lock().unwrap();
+    let mut handles = app_state.handles.lock().unwrap();
+
+    *counter += 1;
+    handles.insert(*counter, handle);
+
+    let stream_resource = req.url_for("close_stream", &[counter.to_string()]).unwrap();
+    let mut response = HttpResponse::Ok();
+    response.insert_header(("Location", stream_resource.to_string()));
+    response.finish()
+}
+
+async fn close() -> HttpResponse {
+    HttpResponse::NoContent().finish()
+}
+
+async fn close_stream(req: HttpRequest, app_state: web::Data<AppState>) -> HttpResponse {
+    let stream_id = req.match_info().get("id").unwrap();
+    let stream_id: u32 = match stream_id.parse() {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::BadRequest().body("Unable to parse stream id"),
+    };
+
+    let mut handles = app_state.handles.lock().unwrap();
+    match handles.remove(&stream_id) {
+        Some(handle) => handle.abort(),
+        None => (),
+    }
+
+    HttpResponse::NoContent().finish()
+}
+
+struct AppState {
+    counter: Mutex<u32>,
+    handles: Mutex<HashMap<u32, JoinHandle<()>>>,
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
-    HttpServer::new(|| {
+
+    let state = web::Data::new(AppState {
+        counter: Mutex::new(0),
+        handles: Mutex::new(HashMap::new()),
+    });
+
+    HttpServer::new(move || {
         App::new()
+            .app_data(state.clone())
             .route("/", web::get().to(status))
             .route("/", web::post().to(stream))
+            .route("/", web::delete().to(close))
+            .service(
+                web::resource("/stream/{id}")
+                    .name("close_stream")
+                    .guard(guard::Delete())
+                    .to(close_stream),
+            )
     })
     .bind("127.0.0.1:8080")?
     .run()

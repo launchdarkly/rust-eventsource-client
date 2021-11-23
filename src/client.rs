@@ -156,6 +156,7 @@ pub struct ReconnectingRequest<C> {
     state: State,
     next_reconnect_delay: Duration,
     event_parser: EventParser,
+    last_event_id: String,
 }
 
 #[allow(clippy::large_enum_variant)] // false positive
@@ -198,6 +199,7 @@ impl<C> ReconnectingRequest<C> {
             state: State::New,
             next_reconnect_delay: reconnect_delay,
             event_parser: EventParser::new(),
+            last_event_id: String::new(),
         }
     }
 }
@@ -209,6 +211,12 @@ impl<C> ReconnectingRequest<C> {
     {
         let mut request = Request::get(&self.props.url);
         *request.headers_mut().unwrap() = self.props.headers.clone();
+        if !self.last_event_id.is_empty() {
+            request.headers_mut().unwrap().insert(
+                "last-event-id",
+                HeaderValue::from_str(&self.last_event_id.clone()).unwrap(),
+            );
+        }
         let request = request
             .body(Body::empty())
             .map_err(|e| Error::HttpRequest(Box::new(e)))?;
@@ -263,6 +271,9 @@ where
         loop {
             let this = self.as_mut().project();
             if let Some(event) = this.event_parser.get_event() {
+                if !event.id.is_empty() {
+                    *this.last_event_id = String::from_utf8(event.id.clone()).unwrap();
+                }
                 return Poll::Ready(Some(Ok(event)));
             }
 

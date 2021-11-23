@@ -28,6 +28,7 @@ tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
 actix = "0.12.0"
 actix-web = "4.0.0-beta.10"
 test-case = "1.2.1"
+reqwest = { version = "0.11.6", features = ["json"] }
 
 [features]
 default = ["rustls"]
