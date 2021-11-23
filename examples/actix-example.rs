@@ -90,11 +90,8 @@ async fn stream(
         reconnect_options = reconnect_options.delay(Duration::from_millis(delay_ms));
     }
 
-    // TODO(mmk) This is really supposed to be part of the client interface I believe
     if let Some(last_event_id) = &config.last_event_id {
-        client_builder = client_builder
-            .header("last-event-id", &last_event_id)
-            .unwrap();
+        client_builder = client_builder.last_event_id(last_event_id.clone());
     }
 
     let client = client_builder.reconnect(reconnect_options.build()).build();

@@ -39,6 +39,7 @@ pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
+    last_event_id: String,
 }
 
 impl ClientBuilder {
@@ -47,6 +48,13 @@ impl ClientBuilder {
         let value = value.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
         self.headers.insert(key, value);
         Ok(self)
+    }
+
+    /// Set the last event id for a stream when it is created. If it is set, it will be sent to the
+    /// server in case it can replay missed events.
+    pub fn last_event_id(mut self, last_event_id: String) -> ClientBuilder {
+        self.last_event_id = last_event_id;
+        self
     }
 
     /// Configure the client's reconnect behaviour according to the supplied
@@ -69,6 +77,7 @@ impl ClientBuilder {
                 headers: self.headers,
                 reconnect_opts: self.reconnect_opts,
             },
+            last_event_id: self.last_event_id,
         }
     }
 
@@ -90,6 +99,7 @@ impl ClientBuilder {
                 headers: self.headers,
                 reconnect_opts: self.reconnect_opts,
             },
+            last_event_id: self.last_event_id,
         }
     }
 }
@@ -106,6 +116,7 @@ struct RequestProps {
 pub struct Client<C> {
     http: hyper::Client<C>,
     request_props: RequestProps,
+    last_event_id: String,
 }
 
 impl Client<()> {
@@ -125,6 +136,7 @@ impl Client<()> {
             url,
             headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
+            last_event_id: String::new(),
         })
     }
 }
@@ -143,7 +155,11 @@ impl<C> Client<C> {
     where
         C: Connect + Clone + Send + Sync + 'static,
     {
-        ReconnectingRequest::new(self.http.clone(), self.request_props.clone())
+        ReconnectingRequest::new(
+            self.http.clone(),
+            self.request_props.clone(),
+            self.last_event_id.clone(),
+        )
     }
 }
 
@@ -191,7 +207,11 @@ impl Debug for State {
 }
 
 impl<C> ReconnectingRequest<C> {
-    fn new(http: hyper::Client<C>, props: RequestProps) -> ReconnectingRequest<C> {
+    fn new(
+        http: hyper::Client<C>,
+        props: RequestProps,
+        last_event_id: String,
+    ) -> ReconnectingRequest<C> {
         let reconnect_delay = props.reconnect_opts.delay;
         ReconnectingRequest {
             props,
@@ -199,7 +219,7 @@ impl<C> ReconnectingRequest<C> {
             state: State::New,
             next_reconnect_delay: reconnect_delay,
             event_parser: EventParser::new(),
-            last_event_id: String::new(),
+            last_event_id,
         }
     }
 }
