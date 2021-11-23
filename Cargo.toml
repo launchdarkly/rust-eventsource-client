@@ -17,27 +17,28 @@ hyper-rustls = { version = "0.22.1", optional = true }
 log = "0.4.6"
 pin-project = "1.0.5"
 tokio = { version = "1.2.0", features = ["time"] }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0.39", optional = true }
+actix = { version = "0.12.0", optional = true }
+actix-web = { version = "4.0.0-beta.10", optional = true }
+reqwest = { version = "0.11.6", features = ["json"], optional = true }
+env_logger = { version = "0.7.1", optional = true }
 
 [dev-dependencies]
-env_logger = "0.7.1"
 maplit = "1.0.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.39"
 simplelog = "0.5.3"
 tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
-actix = "0.12.0"
-actix-web = "4.0.0-beta.10"
 test-case = "1.2.1"
-reqwest = { version = "0.11.6", features = ["json"] }
 
 [features]
 default = ["rustls"]
 rustls = ["hyper-rustls", "hyper/http2"]
+build-binary = ["serde", "serde_json", "actix", "actix-web", "reqwest", "env_logger"]
+
+[[bin]]
+name = "sse-test-api"
+required-features = ["build-binary", "rustls"]
 
 [[example]]
 name = "tail"
-required-features = ["rustls"]
-
-[[example]]
-name = "actix-example"
-required-features = ["rustls"]
+required-features = ["rustls", "env_logger"]
