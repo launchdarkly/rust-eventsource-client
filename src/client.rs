@@ -21,7 +21,7 @@ use log::{debug, info, trace, warn};
 use pin_project::pin_project;
 use tokio::time::Sleep;
 
-use crate::{decode::EventParser, Event};
+use crate::{event_parser::EventParser, Event};
 
 use super::config::ReconnectOptions;
 use super::error::{Error, Result};

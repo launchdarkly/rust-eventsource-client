@@ -24,10 +24,10 @@
 
 mod client;
 mod config;
-mod decode;
 mod error;
+mod event_parser;
 
 pub use client::*;
 pub use config::*;
-pub use decode::Event;
 pub use error::*;
+pub use event_parser::Event;
