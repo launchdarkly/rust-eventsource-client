@@ -1,10 +1,11 @@
 use actix_web::rt::task::JoinHandle;
 use actix_web::{guard, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use eventsource_client as es;
-use futures::TryStreamExt;
+use futures::{executor, TryStreamExt};
 use serde::{self, Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 #[derive(Serialize)]
@@ -135,7 +136,8 @@ async fn stream(
     response.finish()
 }
 
-async fn close() -> HttpResponse {
+async fn close(stopper: web::Data<mpsc::Sender<()>>) -> HttpResponse {
+    stopper.send(()).unwrap();
     HttpResponse::NoContent().finish()
 }
 
@@ -164,13 +166,16 @@ struct AppState {
 async fn main() -> std::io::Result<()> {
     env_logger::init();
 
+    let (tx, rx) = mpsc::channel::<()>();
+
     let state = web::Data::new(AppState {
         counter: Mutex::new(0),
         handles: Mutex::new(HashMap::new()),
     });
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         App::new()
+            .app_data(web::Data::new(tx.clone()))
             .app_data(state.clone())
             .route("/", web::get().to(status))
             .route("/", web::post().to(stream))
@@ -183,6 +188,18 @@ async fn main() -> std::io::Result<()> {
             )
     })
     .bind("127.0.0.1:8080")?
-    .run()
-    .await
+    .run();
+
+    // clone the Server handle
+    let srv = server.clone();
+    thread::spawn(move || {
+        // wait for shutdown signal
+        rx.recv().unwrap();
+
+        // stop server gracefully
+        executor::block_on(srv.stop(true))
+    });
+
+    // run server
+    server.await
 }
