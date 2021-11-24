@@ -187,14 +187,15 @@ async fn main() -> std::io::Result<()> {
     .bind("127.0.0.1:8080")?
     .run();
 
+    let handle = server.handle();
+
     // clone the Server handle
-    let srv = server.clone();
     thread::spawn(move || {
         // wait for shutdown signal
-        rx.recv().unwrap();
-
-        // stop server gracefully
-        executor::block_on(srv.stop(true))
+        match rx.recv() {
+            Ok(()) => executor::block_on(handle.stop(true)),
+            _ => (),
+        };
     });
 
     // run server
