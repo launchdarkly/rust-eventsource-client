@@ -27,8 +27,12 @@ jobs:
           destination: doc
 
       - run:
+          name: Build sse test service
+          command: cargo build --features build-binary --bin sse-test-api
+
+      - run:
           name: Run the sse test service
-          command: cargo run --features build-binary --bin sse-test-api
+          command: RUST_LOG=info ./target/debug/sse-test-api
           background: true
 
       - run:
