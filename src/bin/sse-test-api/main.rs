@@ -146,9 +146,8 @@ async fn close_stream(req: HttpRequest, app_state: web::Data<AppState>) -> HttpR
     };
 
     let mut handles = app_state.handles.lock().unwrap();
-    match handles.remove(&stream_id) {
-        Some(handle) => handle.abort(),
-        None => (),
+    if let Some(handle) = handles.remove(&stream_id) {
+        handle.abort();
     }
 
     HttpResponse::NoContent().finish()
@@ -189,13 +188,11 @@ async fn main() -> std::io::Result<()> {
 
     let handle = server.handle();
 
-    // clone the Server handle
     thread::spawn(move || {
         // wait for shutdown signal
-        match rx.recv() {
-            Ok(()) => executor::block_on(handle.stop(true)),
-            _ => (),
-        };
+        if let Ok(()) = rx.recv() {
+            executor::block_on(handle.stop(true))
+        }
     });
 
     // run server
