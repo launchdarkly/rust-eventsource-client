@@ -2,6 +2,7 @@ use actix_web::rt::task::JoinHandle;
 use actix_web::{guard, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use eventsource_client as es;
 use futures::{executor, TryStreamExt};
+use log::error;
 use serde::{self, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{mpsc, Mutex};
@@ -83,7 +84,14 @@ async fn stream(
     config: web::Json<Config>,
     app_state: web::Data<AppState>,
 ) -> HttpResponse {
-    let mut client_builder = es::Client::for_url(&config.stream_url).unwrap();
+    let mut client_builder = match es::Client::for_url(&config.stream_url) {
+        Ok(cb) => cb,
+        Err(e) => {
+            error!("Failed to create client builder {:?}", e);
+            return HttpResponse::InternalServerError()
+                .body("Unable to build client for processing");
+        }
+    };
     let mut reconnect_options = es::ReconnectOptions::reconnect(true);
 
     if let Some(delay_ms) = config.initial_delay_ms {
@@ -94,10 +102,10 @@ async fn stream(
         client_builder = client_builder.last_event_id(last_event_id.clone());
     }
 
-    let client = client_builder.reconnect(reconnect_options.build()).build();
+    let ld_client = client_builder.reconnect(reconnect_options.build()).build();
 
     let handle = actix_web::rt::spawn(async move {
-        let mut stream = Box::pin(client.stream());
+        let mut stream = Box::pin(ld_client.stream());
         let mut callback_counter = 0;
         let callback_url = &config.callback_url;
         let client = reqwest::Client::new();
@@ -106,14 +114,26 @@ async fn stream(
             match stream.try_next().await {
                 Ok(Some(event)) => {
                     let event_type: EventType = event.into();
-                    let json = format!("{}\n", serde_json::to_string(&event_type).unwrap());
-                    client
+                    let json = match serde_json::to_string(&event_type) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            error!("Failed to json encode event type {:?}", e);
+                            break;
+                        }
+                    };
+
+                    match client
                         .post(format!("{}/{}", callback_url, callback_counter))
-                        .body(json)
+                        .body(format!("{}\n", json))
                         .send()
                         .await
-                        .unwrap();
-                    callback_counter += 1;
+                    {
+                        Ok(_) => callback_counter += 1,
+                        Err(e) => {
+                            error!("Failed to send post back to test harness {:?}", e);
+                            break;
+                        }
+                    };
                 }
                 Ok(None) => break,
                 Err(_) => break,
@@ -121,36 +141,60 @@ async fn stream(
         }
     });
 
-    let mut counter = app_state.counter.lock().unwrap();
-    let mut handles = app_state.handles.lock().unwrap();
+    let mut counter = match app_state.counter.lock() {
+        Ok(c) => c,
+        Err(_) => return HttpResponse::InternalServerError().body("Unable to retrieve counter"),
+    };
+
+    let mut handles = match app_state.handles.lock() {
+        Ok(h) => h,
+        Err(_) => return HttpResponse::InternalServerError().body("Unable to retrieve handles"),
+    };
 
     *counter += 1;
     handles.insert(*counter, handle);
 
-    let stream_resource = req.url_for("close_stream", &[counter.to_string()]).unwrap();
+    let stream_resource = match req.url_for("stop_stream", &[counter.to_string()]) {
+        Ok(sr) => sr,
+        Err(_) => {
+            return HttpResponse::InternalServerError()
+                .body("Unable to generate stream response URL")
+        }
+    };
+
     let mut response = HttpResponse::Ok();
     response.insert_header(("Location", stream_resource.to_string()));
     response.finish()
 }
 
-async fn close(stopper: web::Data<mpsc::Sender<()>>) -> HttpResponse {
-    stopper.send(()).unwrap();
-    HttpResponse::NoContent().finish()
+async fn shutdown(stopper: web::Data<mpsc::Sender<()>>) -> HttpResponse {
+    match stopper.send(()) {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(_) => HttpResponse::InternalServerError().body("Unable to send shutdown signal"),
+    }
 }
 
-async fn close_stream(req: HttpRequest, app_state: web::Data<AppState>) -> HttpResponse {
-    let stream_id = req.match_info().get("id").unwrap();
-    let stream_id: u32 = match stream_id.parse() {
-        Ok(id) => id,
-        Err(_) => return HttpResponse::BadRequest().body("Unable to parse stream id"),
-    };
+async fn stop_stream(req: HttpRequest, app_state: web::Data<AppState>) -> HttpResponse {
+    if let Some(stream_id) = req.match_info().get("id") {
+        let stream_id: u32 = match stream_id.parse() {
+            Ok(id) => id,
+            Err(_) => return HttpResponse::BadRequest().body("Unable to parse stream id"),
+        };
 
-    let mut handles = app_state.handles.lock().unwrap();
-    if let Some(handle) = handles.remove(&stream_id) {
-        handle.abort();
+        match app_state.handles.lock() {
+            Ok(mut handles) => match handles.remove(&stream_id) {
+                Some(handle) => handle.abort(),
+                None => (), // If the provided stream wasn't in the map, then it's shutdown.
+            },
+            Err(_) => {
+                return HttpResponse::InternalServerError().body("Unable to retrieve handles")
+            }
+        };
+
+        HttpResponse::NoContent().finish()
+    } else {
+        HttpResponse::BadRequest().body("No stream id was provided in the URL")
     }
-
-    HttpResponse::NoContent().finish()
 }
 
 struct AppState {
@@ -175,12 +219,12 @@ async fn main() -> std::io::Result<()> {
             .app_data(state.clone())
             .route("/", web::get().to(status))
             .route("/", web::post().to(stream))
-            .route("/", web::delete().to(close))
+            .route("/", web::delete().to(shutdown))
             .service(
                 web::resource("/stream/{id}")
-                    .name("close_stream")
+                    .name("stop_stream")
                     .guard(guard::Delete())
-                    .to(close_stream),
+                    .to(stop_stream),
             )
     })
     .bind("127.0.0.1:8080")?
