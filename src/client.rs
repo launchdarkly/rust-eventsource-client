@@ -11,8 +11,7 @@ use futures::{ready, Stream};
 use hyper::{
     body::HttpBody,
     client::{connect::Connect, ResponseFuture},
-    header::HeaderMap,
-    header::HeaderValue,
+    header::{HeaderMap, HeaderName, HeaderValue},
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
@@ -44,10 +43,9 @@ pub struct ClientBuilder {
 
 impl ClientBuilder {
     /// Set a HTTP header on the SSE request.
-    pub fn header(mut self, key: &'static str, value: &str) -> Result<ClientBuilder> {
-        let value = value.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
+    pub fn header(mut self, key: HeaderName, value: HeaderValue) -> ClientBuilder {
         self.headers.insert(key, value);
-        Ok(self)
+        self
     }
 
     /// Set the last event id for a stream when it is created. If it is set, it will be sent to the

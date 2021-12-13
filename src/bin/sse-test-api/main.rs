@@ -2,9 +2,11 @@ use actix_web::rt::task::JoinHandle;
 use actix_web::{guard, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use eventsource_client as es;
 use futures::{executor, TryStreamExt};
+use hyper::header::{HeaderName, HeaderValue};
 use log::error;
 use serde::{self, Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -75,7 +77,7 @@ struct Event {
 
 async fn status() -> impl Responder {
     web::Json(Status {
-        capabilities: vec!["last-event-id".to_string()],
+        capabilities: vec!["headers".to_string(), "last-event-id".to_string()],
     })
 }
 
@@ -100,6 +102,27 @@ async fn stream(
 
     if let Some(last_event_id) = &config.last_event_id {
         client_builder = client_builder.last_event_id(last_event_id.clone());
+    }
+
+    if let Some(headers) = &config.headers {
+        for (name, value) in headers {
+            let header_name = match HeaderName::from_str(&name) {
+                Ok(hn) => hn,
+                Err(e) => {
+                    error!("Failed to convert {} into HeaderName: {:?}", name, e);
+                    return HttpResponse::BadRequest().body("Invalid header pair provided");
+                }
+            };
+
+            let header_value = match HeaderValue::from_str(&value) {
+                Ok(hv) => hv,
+                Err(e) => {
+                    error!("Failed to convert {} into HeaderValue: {:?}", value, e);
+                    return HttpResponse::BadRequest().body("Invalid header pair provided");
+                }
+            };
+            client_builder = client_builder.header(header_name, header_value);
+        }
     }
 
     let ld_client = client_builder.reconnect(reconnect_options.build()).build();
