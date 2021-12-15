@@ -106,7 +106,7 @@ async fn stream(
 
     if let Some(headers) = &config.headers {
         for (name, value) in headers {
-            let header_name = match HeaderName::from_str(&name) {
+            let header_name = match HeaderName::from_str(name) {
                 Ok(hn) => hn,
                 Err(e) => {
                     error!("Failed to convert {} into HeaderName: {:?}", name, e);
@@ -114,7 +114,7 @@ async fn stream(
                 }
             };
 
-            let header_value = match HeaderValue::from_str(&value) {
+            let header_value = match HeaderValue::from_str(value) {
                 Ok(hv) => hv,
                 Err(e) => {
                     error!("Failed to convert {} into HeaderValue: {:?}", value, e);
@@ -205,10 +205,11 @@ async fn stop_stream(req: HttpRequest, app_state: web::Data<AppState>) -> HttpRe
         };
 
         match app_state.handles.lock() {
-            Ok(mut handles) => match handles.remove(&stream_id) {
-                Some(handle) => handle.abort(),
-                None => (), // If the provided stream wasn't in the map, then it's shutdown.
-            },
+            Ok(mut handles) => {
+                if let Some(handle) = handles.remove(&stream_id) {
+                    handle.abort();
+                }
+            }
             Err(_) => {
                 return HttpResponse::InternalServerError().body("Unable to retrieve handles")
             }
