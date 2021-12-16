@@ -130,6 +130,14 @@ impl EventParser {
         }
     }
 
+    pub fn was_processing(&self) -> bool {
+        if self.incomplete_line.is_some() || !self.complete_lines.is_empty() {
+            true
+        } else {
+            !self.events.is_empty()
+        }
+    }
+
     pub fn get_event(&mut self) -> Option<Event> {
         self.events.pop_front()
     }

@@ -1,10 +1,14 @@
 /// Error type returned from this library's functions.
 #[derive(Debug)]
 pub enum Error {
+    TimedOut,
+    StreamClosed,
     /// The HTTP request failed.
     HttpRequest(Box<dyn std::error::Error + Send + 'static>),
     /// An error reading from the HTTP response body.
     HttpStream(Box<dyn std::error::Error + Send + 'static>),
+    /// The HTTP response stream ended
+    Eof,
     /// The HTTP response stream ended unexpectedly (e.g. in the
     /// middle of an event).
     UnexpectedEof,

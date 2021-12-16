@@ -2,11 +2,9 @@ use actix_web::rt::task::JoinHandle;
 use actix_web::{guard, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use eventsource_client as es;
 use futures::{executor, TryStreamExt};
-use hyper::header::{HeaderName, HeaderValue};
 use log::error;
 use serde::{self, Deserialize, Serialize};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -30,6 +28,9 @@ struct Config {
     /// test harness will send a value anyway in an attempt to avoid having reconnection tests
     /// run unnecessarily slowly.
     initial_delay_ms: Option<u64>,
+    /// An optional integer specifying the read timeout for the connection, in
+    /// milliseconds.
+    read_timeout_ms: Option<u64>,
     /// An optional string which should be sent as the Last-Event-Id header in the initial
     /// HTTP request. The test harness will only set this property if the test service has the
     /// "last-event-id" capability.
@@ -53,6 +54,8 @@ struct Config {
 enum EventType {
     #[serde(rename = "event")]
     Event { event: Event },
+    #[serde(rename = "error")]
+    Error { error: String },
 }
 
 impl From<es::Event> for EventType {
@@ -77,7 +80,11 @@ struct Event {
 
 async fn status() -> impl Responder {
     web::Json(Status {
-        capabilities: vec!["headers".to_string(), "last-event-id".to_string()],
+        capabilities: vec![
+            "read-timeout".to_string(),
+            "headers".to_string(),
+            "last-event-id".to_string(),
+        ],
     })
 }
 
@@ -100,28 +107,23 @@ async fn stream(
         reconnect_options = reconnect_options.delay(Duration::from_millis(delay_ms));
     }
 
+    if let Some(read_timeout_ms) = config.read_timeout_ms {
+        client_builder = client_builder.read_timeout(Duration::from_millis(read_timeout_ms));
+    }
+
     if let Some(last_event_id) = &config.last_event_id {
         client_builder = client_builder.last_event_id(last_event_id.clone());
     }
 
     if let Some(headers) = &config.headers {
         for (name, value) in headers {
-            let header_name = match HeaderName::from_str(name) {
-                Ok(hn) => hn,
+            client_builder = match client_builder.header(name, value) {
+                Ok(cb) => cb,
                 Err(e) => {
-                    error!("Failed to convert {} into HeaderName: {:?}", name, e);
+                    error!("Unable to set header {:?}", e);
                     return HttpResponse::BadRequest().body("Invalid header pair provided");
                 }
             };
-
-            let header_value = match HeaderValue::from_str(value) {
-                Ok(hv) => hv,
-                Err(e) => {
-                    error!("Failed to convert {} into HeaderValue: {:?}", value, e);
-                    return HttpResponse::BadRequest().body("Invalid header pair provided");
-                }
-            };
-            client_builder = client_builder.header(header_name, header_value);
         }
     }
 
@@ -137,29 +139,26 @@ async fn stream(
             match stream.try_next().await {
                 Ok(Some(event)) => {
                     let event_type: EventType = event.into();
-                    let json = match serde_json::to_string(&event_type) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            error!("Failed to json encode event type {:?}", e);
-                            break;
-                        }
+                    if !send_message(event_type, &client, callback_url, &mut callback_counter).await
+                    {
+                        break;
+                    }
+                }
+                Ok(None) => continue,
+                Err(e) => {
+                    let failure = EventType::Error {
+                        error: format!("Error: {:?}", e),
                     };
 
-                    match client
-                        .post(format!("{}/{}", callback_url, callback_counter))
-                        .body(format!("{}\n", json))
-                        .send()
-                        .await
-                    {
-                        Ok(_) => callback_counter += 1,
-                        Err(e) => {
-                            error!("Failed to send post back to test harness {:?}", e);
-                            break;
-                        }
-                    };
+                    if !send_message(failure, &client, callback_url, &mut callback_counter).await {
+                        break;
+                    }
+
+                    match e {
+                        es::Error::StreamClosed => break,
+                        _ => continue,
+                    }
                 }
-                Ok(None) => break,
-                Err(_) => break,
             };
         }
     });
@@ -188,6 +187,36 @@ async fn stream(
     let mut response = HttpResponse::Ok();
     response.insert_header(("Location", stream_resource.to_string()));
     response.finish()
+}
+
+async fn send_message(
+    event_type: EventType,
+    client: &reqwest::Client,
+    callback_url: &str,
+    callback_counter: &mut i32,
+) -> bool {
+    let json = match serde_json::to_string(&event_type) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to json encode event type {:?}", e);
+            return false;
+        }
+    };
+
+    match client
+        .post(format!("{}/{}", callback_url, callback_counter))
+        .body(format!("{}\n", json))
+        .send()
+        .await
+    {
+        Ok(_) => *callback_counter += 1,
+        Err(e) => {
+            error!("Failed to send post back to test harness {:?}", e);
+            return false;
+        }
+    };
+
+    true
 }
 
 async fn shutdown(stopper: web::Data<mpsc::Sender<()>>) -> HttpResponse {

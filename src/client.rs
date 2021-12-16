@@ -1,3 +1,5 @@
+use std::error::Error as StdError;
+use std::str::FromStr;
 use std::{
     fmt::{self, Debug, Display, Formatter},
     future::Future,
@@ -10,15 +12,23 @@ use std::{
 use futures::{ready, Stream};
 use hyper::{
     body::HttpBody,
-    client::{connect::Connect, ResponseFuture},
+    client::{
+        connect::{Connect, Connection},
+        ResponseFuture,
+    },
     header::{HeaderMap, HeaderName, HeaderValue},
+    service::Service,
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
 use hyper_rustls::HttpsConnector as RustlsConnector;
+pub use hyper_timeout::TimeoutConnector;
 use log::{debug, info, trace, warn};
 use pin_project::pin_project;
-use tokio::time::Sleep;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    time::Sleep,
+};
 
 use crate::{event_parser::EventParser, Event};
 
@@ -38,20 +48,30 @@ pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
+    read_timeout: Option<Duration>,
     last_event_id: String,
 }
 
 impl ClientBuilder {
     /// Set a HTTP header on the SSE request.
-    pub fn header(mut self, key: HeaderName, value: HeaderValue) -> ClientBuilder {
-        self.headers.insert(key, value);
-        self
+    pub fn header(mut self, name: &str, value: &str) -> Result<ClientBuilder> {
+        let name = HeaderName::from_str(name).map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        let value = HeaderValue::from_str(value).map_err(|e| Error::HttpRequest(Box::new(e)))?;
+
+        self.headers.insert(name, value);
+        Ok(self)
     }
 
     /// Set the last event id for a stream when it is created. If it is set, it will be sent to the
     /// server in case it can replay missed events.
     pub fn last_event_id(mut self, last_event_id: String) -> ClientBuilder {
         self.last_event_id = last_event_id;
+        self
+    }
+
+    /// Set a read timeout for the underlying connection. There is no read timeout by default.
+    pub fn read_timeout(mut self, read_timeout: Duration) -> ClientBuilder {
+        self.read_timeout = Some(read_timeout);
         self
     }
 
@@ -64,12 +84,19 @@ impl ClientBuilder {
         self
     }
 
-    fn build_with_conn<C>(self, conn: C) -> Client<C>
+    fn build_with_conn<C>(self, conn: C) -> Client<TimeoutConnector<C>>
     where
-        C: Connect + Clone,
+        C: Service<Uri> + Send + 'static + std::clone::Clone,
+        C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+        C::Future: Unpin + Send,
+        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     {
+        let mut connector = TimeoutConnector::new(conn);
+        connector.set_read_timeout(self.read_timeout);
+        let client = hyper::Client::builder().build::<_, hyper::Body>(connector);
+
         Client {
-            http: hyper::Client::builder().build(conn),
+            http: client,
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
@@ -79,12 +106,12 @@ impl ClientBuilder {
         }
     }
 
-    pub fn build_http(self) -> Client<HttpConnector> {
+    pub fn build_http(self) -> Client<TimeoutConnector<HttpConnector>> {
         self.build_with_conn(HttpConnector::new())
     }
 
     #[cfg(feature = "rustls")]
-    pub fn build(self) -> Client<HttpsConnector> {
+    pub fn build(self) -> Client<TimeoutConnector<HttpsConnector>> {
         let conn = HttpsConnector::with_native_roots();
         self.build_with_conn(conn)
     }
@@ -135,6 +162,7 @@ impl Client<()> {
             headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
             last_event_id: String::new(),
+            read_timeout: None,
         })
     }
 }
@@ -184,11 +212,13 @@ enum State {
     },
     Connected(#[pin] hyper::Body),
     WaitingToReconnect(#[pin] Sleep),
+    StreamClosed,
 }
 
 impl State {
     fn name(&self) -> &'static str {
         match self {
+            State::StreamClosed => "closed",
             State::New => "new",
             State::Connecting { retry: false, .. } => "connecting(no-retry)",
             State::Connecting { retry: true, .. } => "connecting(retry)",
@@ -298,17 +328,26 @@ where
             trace!("ReconnectingRequest::poll loop({:?})", &this.state);
 
             let state = this.state.project();
-            let new_state = match state {
+            match state {
+                StateProj::StreamClosed => return Poll::Ready(Some(Err(Error::StreamClosed))),
                 // New immediately transitions to Connecting, and exists only
                 // to ensure that we only connect when polled.
                 StateProj::New => {
-                    let resp = match self.send_request() {
-                        Err(e) => return Poll::Ready(Some(Err(e))),
-                        Ok(r) => r,
-                    };
-                    State::Connecting {
-                        resp,
-                        retry: self.props.reconnect_opts.retry_initial,
+                    *self.as_mut().project().event_parser = EventParser::new();
+                    match self.send_request() {
+                        Ok(resp) => {
+                            let retry = self.props.reconnect_opts.retry_initial;
+                            self.as_mut()
+                                .project()
+                                .state
+                                .set(State::Connecting { resp, retry })
+                        }
+                        Err(e) => {
+                            // This error seems to be unrecoverable. So we should just shut down the
+                            // stream.
+                            self.as_mut().project().state.set(State::StreamClosed);
+                            return Poll::Ready(Some(Err(e)));
+                        }
                     }
                 }
                 StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
@@ -323,14 +362,23 @@ where
                         }
 
                         self.as_mut().reset_backoff();
-                        State::Connected(resp.into_body())
+                        self.as_mut()
+                            .project()
+                            .state
+                            .set(State::Connected(resp.into_body()));
                     }
                     Err(e) => {
+                        // This seems basically impossible. AFAIK we can only get this way if we
+                        // poll after it was already ready
                         warn!("request returned an error: {}", e);
                         if !*retry {
                             return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
                         }
-                        State::WaitingToReconnect(delay(self.as_mut().backoff(), "retrying"))
+                        let duration = self.as_mut().backoff();
+                        self.as_mut()
+                            .project()
+                            .state
+                            .set(State::WaitingToReconnect(delay(duration, "retrying")))
                     }
                 },
                 StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
@@ -338,20 +386,44 @@ where
                         this.event_parser.process_bytes(result)?;
                         continue;
                     }
-                    _ if self.props.reconnect_opts.reconnect => {
-                        State::WaitingToReconnect(delay(self.as_mut().backoff(), "reconnecting"))
+                    Some(Err(e)) => {
+                        if self.props.reconnect_opts.reconnect {
+                            let duration = self.as_mut().backoff();
+                            self.as_mut()
+                                .project()
+                                .state
+                                .set(State::WaitingToReconnect(delay(duration, "reconnecting")));
+                        }
+
+                        if let Some(cause) = e.source() {
+                            if let Some(downcast) = cause.downcast_ref::<std::io::Error>() {
+                                if let std::io::ErrorKind::TimedOut = downcast.kind() {
+                                    return Poll::Ready(Some(Err(Error::TimedOut)));
+                                }
+                            }
+                        } else {
+                            return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
+                        }
                     }
-                    Some(Err(e)) => return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e))))),
-                    None => return Poll::Ready(None),
+                    None => {
+                        let duration = self.as_mut().backoff();
+                        self.as_mut()
+                            .project()
+                            .state
+                            .set(State::WaitingToReconnect(delay(duration, "retrying")));
+
+                        if self.event_parser.was_processing() {
+                            return Poll::Ready(Some(Err(Error::UnexpectedEof)));
+                        }
+                        return Poll::Ready(Some(Err(Error::Eof)));
+                    }
                 },
                 StateProj::WaitingToReconnect(delay) => {
                     ready!(delay.poll(cx));
                     info!("Reconnecting");
-                    let resp = self.send_request()?;
-                    State::Connecting { retry: true, resp }
+                    self.as_mut().project().state.set(State::New);
                 }
             };
-            self.as_mut().project().state.set(new_state);
         }
     }
 }
