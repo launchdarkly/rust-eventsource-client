@@ -30,7 +30,8 @@ use tokio::{
     time::Sleep,
 };
 
-use crate::{event_parser::EventParser, Event};
+use crate::event_parser::EventParser;
+use crate::event_parser::SSE;
 
 use super::config::ReconnectOptions;
 use super::error::{Error, Result};
@@ -311,7 +312,7 @@ impl<C> Stream for ReconnectingRequest<C>
 where
     C: Connect + Clone + Send + Sync + 'static,
 {
-    type Item = Result<Event>;
+    type Item = Result<SSE>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         trace!("ReconnectingRequest::poll({:?})", &self.state);
@@ -319,10 +320,20 @@ where
         loop {
             let this = self.as_mut().project();
             if let Some(event) = this.event_parser.get_event() {
-                if !event.id.is_empty() {
-                    *this.last_event_id = String::from_utf8(event.id.clone()).unwrap();
-                }
-                return Poll::Ready(Some(Ok(event)));
+                match event {
+                    SSE::Event(ref evt) => {
+                        if !evt.id.is_empty() {
+                            *this.last_event_id = String::from_utf8(evt.id.clone()).unwrap();
+                        }
+
+                        if let Some(retry) = evt.retry {
+                            this.props.reconnect_opts.delay = Duration::from_millis(retry);
+                            self.as_mut().reset_backoff();
+                        }
+                        return Poll::Ready(Some(Ok(event)));
+                    }
+                    SSE::Comment(_) => return Poll::Ready(Some(Ok(event))),
+                };
             }
 
             trace!("ReconnectingRequest::poll loop({:?})", &this.state);

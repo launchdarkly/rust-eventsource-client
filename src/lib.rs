@@ -1,7 +1,7 @@
 //! Client for the [Server-Sent Events] protocol (aka [EventSource]).
 //!
 //! ```
-//! use eventsource_client::Client;
+//! use eventsource_client::{Client, SSE};
 //! # use futures::{Stream, TryStreamExt};
 //!
 //! # #[tokio::main]
@@ -11,7 +11,10 @@
 //!     .build();
 //!
 //! let mut stream = Box::pin(client.stream())
-//!     .map_ok(|event| println!("got an event: {}", event.event_type))
+//!     .map_ok(|event| match event {
+//!         SSE::Comment(comment) => println!("got a comment event: {:?}", comment),
+//!         SSE::Event(evt) => println!("got an event: {}", evt.event_type)
+//!     })
 //!     .map_err(|e| println!("error streaming events: {:?}", e));
 //! # while let Ok(Some(_)) = stream.try_next().await {}
 //! #
@@ -30,4 +33,4 @@ mod event_parser;
 pub use client::*;
 pub use config::*;
 pub use error::*;
-pub use event_parser::Event;
+pub use event_parser::SSE;

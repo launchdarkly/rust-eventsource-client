@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, str::from_utf8};
+use std::{collections::VecDeque, convert::TryFrom, str::from_utf8};
 
 use hyper::body::Bytes;
 use log::{debug, log_enabled, trace};
@@ -6,20 +6,18 @@ use pin_project::pin_project;
 
 use super::error::{Error, Result};
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Event {
+#[derive(Default, PartialEq)]
+struct EventData {
     pub event_type: String,
     pub data: Vec<u8>,
     pub id: Vec<u8>,
+    pub retry: Option<u64>,
+    pub comment: Vec<u8>,
 }
 
-impl Event {
-    fn new() -> Event {
-        Event {
-            event_type: "".to_string(),
-            data: Vec::new(),
-            id: Vec::new(),
-        }
+impl EventData {
+    fn new() -> Self {
+        Self::default()
     }
 
     pub fn append_data(&mut self, value: &[u8]) {
@@ -32,25 +30,67 @@ impl Event {
         // https://github.com/whatwg/html/issues/689
         self.id = value.to_vec();
     }
+}
 
-    fn format_for_dispatch(self) -> Option<Self> {
-        if self.data.is_empty() {
-            return None;
+#[derive(Debug, PartialEq)]
+pub enum SSE {
+    Event(Event),
+    Comment(Vec<u8>),
+}
+
+impl TryFrom<EventData> for Option<SSE> {
+    type Error = Error;
+
+    fn try_from(event_data: EventData) -> std::result::Result<Self, Self::Error> {
+        let mut default = EventData::default();
+        if event_data == default {
+            return Err(Error::InvalidEvent);
         }
 
-        let event_type = match self.event_type.is_empty() {
+        default.comment = event_data.comment.clone();
+        if event_data == default {
+            return Ok(Some(SSE::Comment(event_data.comment)));
+        }
+
+        if event_data.data.is_empty() {
+            return Ok(None);
+        }
+
+        let event_type = match event_data.event_type.is_empty() {
             true => String::from("message"),
-            false => self.event_type,
+            false => event_data.event_type,
         };
 
-        let mut data = self.data;
+        let mut data = event_data.data;
         data.truncate(data.len() - 1);
 
-        Some(Event {
+        Ok(Some(SSE::Event(Event {
             event_type,
             data,
-            id: self.id,
-        })
+            id: event_data.id,
+            retry: event_data.retry,
+        })))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Event {
+    pub event_type: String,
+    pub data: Vec<u8>,
+    pub id: Vec<u8>,
+    pub retry: Option<u64>,
+}
+
+impl Event {
+    pub fn append_data(&mut self, value: &[u8]) {
+        self.data.extend(value.to_vec());
+        self.data.push(b'\n');
+    }
+
+    pub fn set_id(&mut self, value: &[u8]) {
+        // TODO(mmk) If value has a null code point, ignore this assignment
+        // https://github.com/whatwg/html/issues/689
+        self.id = value.to_vec();
     }
 }
 
@@ -73,11 +113,9 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &[u8])>> {
 
     match line.iter().position(|&b| b':' == b) {
         Some(0) => {
-            debug!(
-                "comment: {}",
-                from_utf8(&line[1..]).unwrap_or("<bad utf-8>")
-            );
-            Ok(None)
+            let value = &line[1..];
+            debug!("comment: {}", from_utf8(value).unwrap_or("<bad utf-8>"));
+            Ok(Some(("comment", value)))
         }
         Some(colon_pos) => {
             let key = &line[0..colon_pos];
@@ -113,10 +151,10 @@ pub struct EventParser {
     /// flagged if the last character processed as a carriage return; used to help process CRLF
     /// pairs
     last_char_was_cr: bool,
-    /// the event currently being decoded
-    event: Option<Event>,
+    /// the event data currently being decoded
+    event_data: Option<EventData>,
 
-    events: VecDeque<Event>,
+    sse: VecDeque<SSE>,
 }
 
 impl EventParser {
@@ -125,8 +163,8 @@ impl EventParser {
             complete_lines: VecDeque::with_capacity(10),
             incomplete_line: None,
             last_char_was_cr: false,
-            event: None,
-            events: VecDeque::with_capacity(3),
+            event_data: None,
+            sse: VecDeque::with_capacity(3),
         }
     }
 
@@ -134,12 +172,12 @@ impl EventParser {
         if self.incomplete_line.is_some() || !self.complete_lines.is_empty() {
             true
         } else {
-            !self.events.is_empty()
+            !self.sse.is_empty()
         }
     }
 
-    pub fn get_event(&mut self) -> Option<Event> {
-        self.events.pop_front()
+    pub fn get_event(&mut self) -> Option<SSE> {
+        self.sse.pop_front()
     }
 
     pub fn process_bytes(&mut self, bytes: Bytes) -> Result<()> {
@@ -170,7 +208,7 @@ impl EventParser {
             let mut seen_empty_line = false;
 
             while let Some(line) = self.complete_lines.pop_front() {
-                if line.is_empty() && self.event.is_some() {
+                if line.is_empty() && self.event_data.is_some() {
                     seen_empty_line = true;
                     break;
                 } else if line.is_empty() {
@@ -178,37 +216,47 @@ impl EventParser {
                 }
 
                 if let Some((key, value)) = parse_field(&line)? {
-                    let event = self.event.get_or_insert_with(Event::new);
-
-                    if key == "event" {
-                        event.event_type = from_utf8(value)
+                    let event_data = self.event_data.get_or_insert_with(EventData::new);
+                    if key == "comment" {
+                        event_data.comment = value.to_vec();
+                    } else if key == "event" {
+                        event_data.event_type = from_utf8(value)
                             .map_err(Error::InvalidEventType)?
                             .to_string();
                     } else if key == "data" {
-                        event.append_data(value);
+                        event_data.append_data(value);
                     } else if key == "id" {
-                        event.set_id(value);
+                        event_data.set_id(value);
+                    } else if key == "retry" {
+                        match from_utf8(value).unwrap_or("").parse::<u64>() {
+                            Ok(retry) => event_data.retry = Some(retry),
+                            _ => debug!("Failed to parse {:?} into retry value", value),
+                        };
                     }
                 }
             }
 
             if seen_empty_line {
-                let event = self.event.take();
+                let event_data = self.event_data.take();
 
                 trace!(
-                    "seen empty line, event is {:?})",
-                    self.event.as_ref().map(|event| &event.event_type)
+                    "seen empty line, event_data is {:?})",
+                    self.event_data
+                        .as_ref()
+                        .map(|event_data| &event_data.event_type)
                 );
 
-                if let Some(event) = event {
-                    if let Some(dispatch_event) = event.format_for_dispatch() {
-                        self.events.push_back(dispatch_event);
-                    }
+                if let Some(event_data) = event_data {
+                    match Option::<SSE>::try_from(event_data) {
+                        Err(e) => return Err(e),
+                        Ok(None) => (),
+                        Ok(Some(event)) => self.sse.push_back(event),
+                    };
                 }
 
                 continue;
             } else {
-                trace!("processed all complete lines but event not yet complete");
+                trace!("processed all complete lines but event_data not yet complete");
             }
 
             break;
@@ -333,9 +381,12 @@ mod tests {
 
     #[test]
     fn test_parse_field_comments() {
-        assert_eq!(parse_field(b":"), Ok(None));
-        assert_eq!(parse_field(b": hello \0 world"), Ok(None));
-        assert_eq!(parse_field(b": event: foo"), Ok(None));
+        assert_eq!(parse_field(b":"), field("comment", b""));
+        assert_eq!(
+            parse_field(b":hello \0 world"),
+            field("comment", b"hello \0 world")
+        );
+        assert_eq!(parse_field(b":event: foo"), field("comment", b"event: foo"));
     }
 
     #[test]
@@ -357,12 +408,13 @@ mod tests {
         assert_eq!(parse_field(b"\xe2\x98\x83: foo"), field("☃", b"foo"));
     }
 
-    fn event(typ: &str, data: &[u8], id: &[u8]) -> Event {
-        let mut evt = Event::new();
-        evt.data = data.to_vec();
-        evt.id = id.to_vec();
-        evt.event_type = typ.to_string();
-        evt
+    fn event(typ: &str, data: &[u8], id: &[u8]) -> SSE {
+        SSE::Event(Event {
+            data: data.to_vec(),
+            id: id.to_vec(),
+            event_type: typ.to_string(),
+            retry: None,
+        })
     }
 
     #[test]
@@ -378,7 +430,7 @@ mod tests {
         let mut parser = EventParser::new();
 
         assert!(parser.process_bytes(Bytes::from(chunk)).is_ok());
-        if let Some(event) = parser.get_event() {
+        if let Some(SSE::Event(event)) = parser.get_event() {
             assert_eq!(event_type, event.event_type);
         } else {
             panic!("Event should have been received")
@@ -391,10 +443,10 @@ mod tests {
     #[test_case("data: hello\r\n\r", event("message", &b"hello"[..], &b""[..]); "parses event body with CRLF and trailing CR")]
     #[test_case("data: hello\r\r", event("message", &b"hello"[..], &b""[..]); "parses event body with CR")]
     #[test_case("data: hello\r\r\n", event("message", &b"hello"[..], &b""[..]); "parses event body with CR and trailing CRLF")]
-    fn test_decode_chunks_simple(chunk: &'static str, event: Event) {
+    fn test_decode_chunks_simple(chunk: &'static str, event: SSE) {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(chunk)).is_ok());
-        assert_eq!(parser.get_event(), Some(event));
+        assert_eq!(parser.get_event().unwrap(), event);
         assert!(parser.get_event().is_none());
     }
 
@@ -409,7 +461,7 @@ mod tests {
 
     #[test_case(&["data:", "hello\n\n"], event("message", &b"hello"[..], &b""[..]); "data split")]
     #[test_case(&["data:hell", "o\n\n"], event("message", &b"hello"[..], &b""[..]); "data truncated")]
-    fn test_decode_message_split_across_chunks(chunks: &[&'static str], event: Event) {
+    fn test_decode_message_split_across_chunks(chunks: &[&'static str], event: SSE) {
         let mut parser = EventParser::new();
 
         if let Some((last, chunks)) = chunks.split_last() {
@@ -429,10 +481,7 @@ mod tests {
     #[test_case(&["data:hell", "o\n\ndata:", "world\n\n"], &[event("message", &b"hello"[..], &b""[..]), event("message", &b"world"[..], &b""[..])]; "with lf")]
     #[test_case(&["data:hell", "o\r\rdata:", "world\r\r"], &[event("message", &b"hello"[..], &b""[..]), event("message", &b"world"[..], &b""[..])]; "with cr")]
     #[test_case(&["data:hell", "o\r\n\ndata:", "world\r\n\n"], &[event("message", &b"hello"[..], &b""[..]), event("message", &b"world"[..], &b""[..])]; "with crlf")]
-    fn test_decode_multiple_messages_split_across_chunks(
-        chunks: &[&'static str],
-        events: &[Event],
-    ) {
+    fn test_decode_multiple_messages_split_across_chunks(chunks: &[&'static str], events: &[SSE]) {
         let mut parser = EventParser::new();
 
         for chunk in chunks {
@@ -440,7 +489,7 @@ mod tests {
         }
 
         for event in events {
-            assert_eq!(parser.get_event(), Some(event.clone()));
+            assert_eq!(parser.get_event().unwrap(), *event);
         }
 
         assert!(parser.get_event().is_none());
@@ -517,7 +566,7 @@ mod tests {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(contents)).is_ok());
 
-        if let Some(event) = parser.get_event() {
+        if let Some(SSE::Event(event)) = parser.get_event() {
             assert_eq!(event.event_type, "patch");
             let data = event_data(&event).expect("event data should parse");
             assert!(data.contains(r#"path":"/flags/goals.02.featureWithGoals"#));
@@ -533,7 +582,7 @@ mod tests {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(contents)).is_ok());
 
-        if let Some(event) = parser.get_event() {
+        if let Some(SSE::Event(event)) = parser.get_event() {
             assert_eq!(event.event_type, "one");
             let data = event_data(&event).expect("event data should parse");
             assert_eq!(data, "One");
@@ -541,7 +590,7 @@ mod tests {
             panic!("Should have returned an event");
         }
 
-        if let Some(event) = parser.get_event() {
+        if let Some(SSE::Event(event)) = parser.get_event() {
             assert_eq!(event.event_type, "two");
             let data = event_data(&event).expect("event data should parse");
             assert_eq!(data, "Two");
@@ -557,7 +606,7 @@ mod tests {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(contents)).is_ok());
 
-        if let Some(event) = parser.get_event() {
+        if let Some(SSE::Event(event)) = parser.get_event() {
             assert_eq!(event.event_type, "patch");
             let data = event_data(&event).expect("event data should parse");
             assert!(data.len() > 10_000);
@@ -566,7 +615,7 @@ mod tests {
             panic!("Should have returned an event");
         }
 
-        if let Some(event) = parser.get_event() {
+        if let Some(SSE::Event(event)) = parser.get_event() {
             assert_eq!(event.event_type, "patch");
             let data = event_data(&event).expect("event data should parse");
             assert!(data.contains(r#"path":"/flags/goals.02.featureWithGoals"#));
