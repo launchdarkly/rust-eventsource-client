@@ -90,6 +90,8 @@ async fn status() -> impl Responder {
         capabilities: vec![
             "comments".to_string(),
             "retry".to_string(),
+            "post".to_string(),
+            "report".to_string(),
             "read-timeout".to_string(),
             "headers".to_string(),
             "last-event-id".to_string(),
@@ -122,6 +124,14 @@ async fn stream(
 
     if let Some(last_event_id) = &config.last_event_id {
         client_builder = client_builder.last_event_id(last_event_id.clone());
+    }
+
+    if let Some(method) = &config.method {
+        client_builder = client_builder.method(method.to_string());
+    }
+
+    if let Some(body) = &config.body {
+        client_builder = client_builder.body(body.to_string());
     }
 
     if let Some(headers) = &config.headers {

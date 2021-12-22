@@ -48,6 +48,8 @@ pub type HttpsConnector = RustlsConnector<HttpConnector>;
 pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
+    method: String,
+    body: Option<String>,
     reconnect_opts: ReconnectOptions,
     read_timeout: Option<Duration>,
     last_event_id: String,
@@ -61,6 +63,18 @@ impl ClientBuilder {
 
         self.headers.insert(name, value);
         Ok(self)
+    }
+
+    /// Set the request method used for the initial connection to the SSE endpoint.
+    pub fn method(mut self, method: String) -> ClientBuilder {
+        self.method = method;
+        self
+    }
+
+    /// Set the request body used for the initial connection to the SSE endpoint.
+    pub fn body(mut self, body: String) -> ClientBuilder {
+        self.body = Some(body);
+        self
     }
 
     /// Set the last event id for a stream when it is created. If it is set, it will be sent to the
@@ -102,6 +116,8 @@ impl ClientBuilder {
                 url: self.url,
                 headers: self.headers,
                 reconnect_opts: self.reconnect_opts,
+                method: self.method,
+                body: self.body,
             },
             last_event_id: self.last_event_id,
         }
@@ -123,6 +139,8 @@ impl ClientBuilder {
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
+                method: self.method,
+                body: self.body,
                 reconnect_opts: self.reconnect_opts,
             },
             last_event_id: self.last_event_id,
@@ -134,6 +152,8 @@ impl ClientBuilder {
 struct RequestProps {
     url: Uri,
     headers: HeaderMap,
+    method: String,
+    body: Option<String>,
     reconnect_opts: ReconnectOptions,
 }
 
@@ -160,7 +180,9 @@ impl Client<()> {
 
         Ok(ClientBuilder {
             url,
+            method: String::from("GET"),
             headers: header_map,
+            body: None,
             reconnect_opts: ReconnectOptions::default(),
             last_event_id: String::new(),
             read_timeout: None,
@@ -258,16 +280,28 @@ impl<C> ReconnectingRequest<C> {
     where
         C: Connect + Clone + Send + Sync + 'static,
     {
-        let mut request = Request::get(&self.props.url);
-        *request.headers_mut().unwrap() = self.props.headers.clone();
+        let mut request_builder = Request::builder()
+            .method(self.props.method.as_str())
+            .uri(&self.props.url);
+
+        for (name, value) in &self.props.headers {
+            request_builder = request_builder.header(name, value);
+        }
         if !self.last_event_id.is_empty() {
-            request.headers_mut().unwrap().insert(
+            request_builder = request_builder.header(
                 "last-event-id",
                 HeaderValue::from_str(&self.last_event_id.clone()).unwrap(),
             );
         }
-        let request = request
-            .body(Body::empty())
+
+        let mut body = Body::empty();
+
+        if let Some(props_body) = &self.props.body {
+            body = Body::from(props_body.to_string());
+        }
+
+        let request = request_builder
+            .body(body)
             .map_err(|e| Error::HttpRequest(Box::new(e)))?;
         Ok(self.http.request(request))
     }
