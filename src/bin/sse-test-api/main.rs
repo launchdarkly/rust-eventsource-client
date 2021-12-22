@@ -1,13 +1,13 @@
-use actix_web::rt::task::JoinHandle;
+mod stream_entity;
+
 use actix_web::{guard, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use eventsource_client as es;
-use futures::{executor, TryStreamExt};
-use log::error;
+use futures::executor;
 use serde::{self, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{mpsc, Mutex};
 use std::thread;
-use std::time::Duration;
+use stream_entity::StreamEntity;
 
 #[derive(Serialize)]
 struct Status {
@@ -104,96 +104,24 @@ async fn stream(
     config: web::Json<Config>,
     app_state: web::Data<AppState>,
 ) -> HttpResponse {
-    let mut client_builder = match es::Client::for_url(&config.stream_url) {
-        Ok(cb) => cb,
-        Err(e) => {
-            error!("Failed to create client builder {:?}", e);
-            return HttpResponse::InternalServerError()
-                .body("Unable to build client for processing");
-        }
+    let mut stream_entity = match StreamEntity::new(config.into_inner()) {
+        Ok(se) => se,
+        Err(e) => return HttpResponse::InternalServerError().body(e),
     };
-    let mut reconnect_options = es::ReconnectOptions::reconnect(true);
-
-    if let Some(delay_ms) = config.initial_delay_ms {
-        reconnect_options = reconnect_options.delay(Duration::from_millis(delay_ms));
-    }
-
-    if let Some(read_timeout_ms) = config.read_timeout_ms {
-        client_builder = client_builder.read_timeout(Duration::from_millis(read_timeout_ms));
-    }
-
-    if let Some(last_event_id) = &config.last_event_id {
-        client_builder = client_builder.last_event_id(last_event_id.clone());
-    }
-
-    if let Some(method) = &config.method {
-        client_builder = client_builder.method(method.to_string());
-    }
-
-    if let Some(body) = &config.body {
-        client_builder = client_builder.body(body.to_string());
-    }
-
-    if let Some(headers) = &config.headers {
-        for (name, value) in headers {
-            client_builder = match client_builder.header(name, value) {
-                Ok(cb) => cb,
-                Err(e) => {
-                    error!("Unable to set header {:?}", e);
-                    return HttpResponse::BadRequest().body("Invalid header pair provided");
-                }
-            };
-        }
-    }
-
-    let ld_client = client_builder.reconnect(reconnect_options.build()).build();
-
-    let handle = actix_web::rt::spawn(async move {
-        let mut stream = Box::pin(ld_client.stream());
-        let mut callback_counter = 0;
-        let callback_url = &config.callback_url;
-        let client = reqwest::Client::new();
-
-        loop {
-            match stream.try_next().await {
-                Ok(Some(event)) => {
-                    let event_type: EventType = event.into();
-                    if !send_message(event_type, &client, callback_url, &mut callback_counter).await
-                    {
-                        break;
-                    }
-                }
-                Ok(None) => continue,
-                Err(e) => {
-                    let failure = EventType::Error {
-                        error: format!("Error: {:?}", e),
-                    };
-
-                    if !send_message(failure, &client, callback_url, &mut callback_counter).await {
-                        break;
-                    }
-
-                    match e {
-                        es::Error::StreamClosed => break,
-                        _ => continue,
-                    }
-                }
-            };
-        }
-    });
 
     let mut counter = match app_state.counter.lock() {
         Ok(c) => c,
         Err(_) => return HttpResponse::InternalServerError().body("Unable to retrieve counter"),
     };
 
-    let mut handles = match app_state.handles.lock() {
+    let mut entities = match app_state.stream_entities.lock() {
         Ok(h) => h,
         Err(_) => return HttpResponse::InternalServerError().body("Unable to retrieve handles"),
     };
 
     *counter += 1;
-    handles.insert(*counter, handle);
+    stream_entity.start();
+    entities.insert(*counter, stream_entity);
 
     let stream_resource = match req.url_for("stop_stream", &[counter.to_string()]) {
         Ok(sr) => sr,
@@ -206,36 +134,6 @@ async fn stream(
     let mut response = HttpResponse::Ok();
     response.insert_header(("Location", stream_resource.to_string()));
     response.finish()
-}
-
-async fn send_message(
-    event_type: EventType,
-    client: &reqwest::Client,
-    callback_url: &str,
-    callback_counter: &mut i32,
-) -> bool {
-    let json = match serde_json::to_string(&event_type) {
-        Ok(s) => s,
-        Err(e) => {
-            error!("Failed to json encode event type {:?}", e);
-            return false;
-        }
-    };
-
-    match client
-        .post(format!("{}/{}", callback_url, callback_counter))
-        .body(format!("{}\n", json))
-        .send()
-        .await
-    {
-        Ok(_) => *callback_counter += 1,
-        Err(e) => {
-            error!("Failed to send post back to test harness {:?}", e);
-            return false;
-        }
-    };
-
-    true
 }
 
 async fn shutdown(stopper: web::Data<mpsc::Sender<()>>) -> HttpResponse {
@@ -252,10 +150,10 @@ async fn stop_stream(req: HttpRequest, app_state: web::Data<AppState>) -> HttpRe
             Err(_) => return HttpResponse::BadRequest().body("Unable to parse stream id"),
         };
 
-        match app_state.handles.lock() {
-            Ok(mut handles) => {
-                if let Some(handle) = handles.remove(&stream_id) {
-                    handle.abort();
+        match app_state.stream_entities.lock() {
+            Ok(mut entities) => {
+                if let Some(mut entity) = entities.remove(&stream_id) {
+                    entity.stop();
                 }
             }
             Err(_) => {
@@ -271,7 +169,7 @@ async fn stop_stream(req: HttpRequest, app_state: web::Data<AppState>) -> HttpRe
 
 struct AppState {
     counter: Mutex<u32>,
-    handles: Mutex<HashMap<u32, JoinHandle<()>>>,
+    stream_entities: Mutex<HashMap<u32, StreamEntity>>,
 }
 
 #[actix_web::main]
@@ -282,7 +180,7 @@ async fn main() -> std::io::Result<()> {
 
     let state = web::Data::new(AppState {
         counter: Mutex::new(0),
-        handles: Mutex::new(HashMap::new()),
+        stream_entities: Mutex::new(HashMap::new()),
     });
 
     let server = HttpServer::new(move || {
