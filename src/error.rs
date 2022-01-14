@@ -1,8 +1,12 @@
+use hyper::StatusCode;
+
 /// Error type returned from this library's functions.
 #[derive(Debug)]
 pub enum Error {
+    /// An invalid request parameter
+    InvalidParameter(Box<dyn std::error::Error + Send + 'static>),
     /// The HTTP request failed.
-    HttpRequest(Box<dyn std::error::Error + Send + 'static>),
+    HttpRequest(StatusCode),
     /// An error reading from the HTTP response body.
     HttpStream(Box<dyn std::error::Error + Send + 'static>),
     /// The HTTP response stream ended unexpectedly (e.g. in the
@@ -38,7 +42,6 @@ impl Error {
 
     pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::HttpRequest(err) => Some(err.as_ref()),
             Error::HttpStream(err) => Some(err.as_ref()),
             Error::Unexpected(err) => Some(err.as_ref()),
             _ => None,
