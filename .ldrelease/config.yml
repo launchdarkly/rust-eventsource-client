@@ -1,0 +1,9 @@
+version: 2
+
+publications:
+  - url: https://docs.rs/eventsource-client
+    description: crates.io
+
+jobs:
+  - template:
+      name: rust
