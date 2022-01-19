@@ -6,7 +6,7 @@ repository = "https://github.com/launchdarkly/rust-eventsource-client"
 authors = ["LaunchDarkly"]
 edition = "2018"
 license = "Apache-2.0"
-keywords = ["launchdarkly", "feature-flags", "feature-toggles", "eventsource", "server-sent events"]
+keywords = ["launchdarkly", "feature-flags", "feature-toggles", "eventsource", "server-sent-events"]
 exclude = [
   ".circleci",
   ".ldrelease"
