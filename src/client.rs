@@ -58,7 +58,7 @@ impl ClientBuilder {
         self
     }
 
-    fn build_with_conn<C>(self, conn: C) -> Client<C>
+    pub fn build_with_conn<C>(self, conn: C) -> Client<C>
     where
         C: Connect + Clone,
     {
