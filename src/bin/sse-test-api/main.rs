@@ -21,8 +21,6 @@ struct Config {
     stream_url: String,
     /// The URL of a callback endpoint created by the test harness .
     callback_url: String,
-    /// A string describing the current test, if desired for logging.
-    tag: Option<String>,
     /// An optional integer specifying the initial reconnection delay parameter, in
     /// milliseconds. Not all SSE client implementations allow this to be configured, but the
     /// test harness will send a value anyway in an attempt to avoid having reconnection tests
@@ -31,22 +29,12 @@ struct Config {
     /// An optional integer specifying the read timeout for the connection, in
     /// milliseconds.
     read_timeout_ms: Option<u64>,
-    /// An optional string which should be sent as the Last-Event-Id header in the initial
-    /// HTTP request. The test harness will only set this property if the test service has the
-    /// "last-event-id" capability.
-    last_event_id: Option<String>,
     /// A JSON object containing additional HTTP header names and string values. The SSE
     /// client should be configured to add these headers to its HTTP requests; the test harness
     /// will then verify that it receives those headers. The test harness will only set this
     /// property if the test service has the "headers" capability. Header names can be assumed
     /// to all be lowercase.
     headers: Option<HashMap<String, String>>,
-    /// A string specifying an HTTP method to use instead of GET. The test harness will only
-    /// set this property if the test service has the "post" or "report" capability.
-    method: Option<String>,
-    /// A string specifying data to be sent in the HTTP request body. The test harness will
-    /// only set this property if the test service has the "post" or "report" capability.
-    body: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -54,24 +42,17 @@ struct Config {
 enum EventType {
     #[serde(rename = "event")]
     Event { event: Event },
-    #[serde(rename = "comment")]
-    Comment { comment: String },
     #[serde(rename = "error")]
     Error { error: String },
 }
 
-impl From<es::SSE> for EventType {
-    fn from(event: es::SSE) -> Self {
-        match event {
-            es::SSE::Event(evt) => Self::Event {
-                event: Event {
-                    event_type: evt.event_type,
-                    data: String::from_utf8(evt.data.to_vec()).unwrap(),
-                    id: String::from_utf8(evt.id.to_vec()).unwrap(),
-                },
-            },
-            es::SSE::Comment(comment) => Self::Comment {
-                comment: String::from_utf8(comment).unwrap(),
+impl From<es::Event> for EventType {
+    fn from(event: es::Event) -> Self {
+        Self::Event {
+            event: Event {
+                event_type: event.event_type.clone(),
+                data: String::from_utf8(event.field("data").unwrap_or_default().to_vec()).unwrap(),
+                id: String::from_utf8(event.field("id").unwrap_or_default().to_vec()).unwrap(),
             },
         }
     }

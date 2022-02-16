@@ -3,6 +3,7 @@ use hyper::StatusCode;
 /// Error type returned from this library's functions.
 #[derive(Debug)]
 pub enum Error {
+    StreamClosed,
     /// An invalid request parameter
     InvalidParameter(Box<dyn std::error::Error + Send + 'static>),
     /// The HTTP request failed.
