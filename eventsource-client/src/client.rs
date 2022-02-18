@@ -11,33 +11,23 @@ use std::{
 use futures::{ready, Stream};
 use hyper::{
     body::{Bytes, HttpBody},
-    client::{
-        connect::{Connect, Connection},
-        ResponseFuture,
-    },
+    client::{connect::Connect, ResponseFuture},
     header::{HeaderMap, HeaderName, HeaderValue},
-    service::Service,
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
 use hyper_rustls::HttpsConnector as RustlsConnector;
 use log::{debug, info, trace, warn};
 use pin_project::pin_project;
-
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    time::Sleep,
-};
+use tokio::time::Sleep;
 
 use super::config::ReconnectOptions;
 use super::decode::Decoded;
 use super::error::{Error, Result};
 
 pub use hyper::client::HttpConnector;
-
 #[cfg(feature = "rustls")]
 pub type HttpsConnector = RustlsConnector<HttpConnector>;
-pub use hyper_timeout::TimeoutConnector;
 
 /*
  * TODO remove debug output
@@ -48,7 +38,6 @@ pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
-    read_timeout: Option<Duration>,
 }
 
 impl ClientBuilder {
@@ -64,12 +53,6 @@ impl ClientBuilder {
         Ok(self)
     }
 
-    /// Set a read timeout for the underlying connection. There is no read timeout by default.
-    pub fn read_timeout(mut self, read_timeout: Duration) -> ClientBuilder {
-        self.read_timeout = Some(read_timeout);
-        self
-    }
-
     /// Configure the client's reconnect behaviour according to the supplied
     /// [`ReconnectOptions`].
     ///
@@ -79,19 +62,12 @@ impl ClientBuilder {
         self
     }
 
-    pub fn build_with_conn<C>(self, conn: C) -> Client<TimeoutConnector<C>>
+    pub fn build_with_conn<C>(self, conn: C) -> Client<C>
     where
-        C: Service<Uri> + Send + 'static + std::clone::Clone,
-        C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        C::Future: Unpin + Send,
-        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send,
+        C: Connect + Clone,
     {
-        let mut connector = TimeoutConnector::new(conn);
-        connector.set_read_timeout(self.read_timeout);
-        let client = hyper::Client::builder().build::<_, hyper::Body>(connector);
-
         Client {
-            http: client,
+            http: hyper::Client::builder().build(conn),
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
@@ -100,12 +76,12 @@ impl ClientBuilder {
         }
     }
 
-    pub fn build_http(self) -> Client<TimeoutConnector<HttpConnector>> {
+    pub fn build_http(self) -> Client<HttpConnector> {
         self.build_with_conn(HttpConnector::new())
     }
 
     #[cfg(feature = "rustls")]
-    pub fn build(self) -> Client<TimeoutConnector<HttpsConnector>> {
+    pub fn build(self) -> Client<HttpsConnector> {
         let conn = HttpsConnector::with_native_roots();
         self.build_with_conn(conn)
     }
@@ -150,7 +126,6 @@ impl Client<()> {
             url,
             headers: HeaderMap::new(),
             reconnect_opts: ReconnectOptions::default(),
-            read_timeout: None,
         })
     }
 }

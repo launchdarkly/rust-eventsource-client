@@ -26,9 +26,6 @@ struct Config {
     /// test harness will send a value anyway in an attempt to avoid having reconnection tests
     /// run unnecessarily slowly.
     initial_delay_ms: Option<u64>,
-    /// An optional integer specifying the read timeout for the connection, in
-    /// milliseconds.
-    read_timeout_ms: Option<u64>,
     /// A JSON object containing additional HTTP header names and string values. The SSE
     /// client should be configured to add these headers to its HTTP requests; the test harness
     /// will then verify that it receives those headers. The test harness will only set this
@@ -72,7 +69,6 @@ async fn status() -> impl Responder {
             "comments".to_string(),
             "post".to_string(),
             "report".to_string(),
-            "read-timeout".to_string(),
             "headers".to_string(),
             "last-event-id".to_string(),
         ],

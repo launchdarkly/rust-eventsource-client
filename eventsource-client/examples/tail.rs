@@ -36,9 +36,7 @@ async fn main() -> Result<(), es::Error> {
     Ok(())
 }
 
-fn tail_events(
-    client: es::Client<es::TimeoutConnector<es::HttpsConnector>>,
-) -> impl Stream<Item = Result<(), ()>> {
+fn tail_events(client: es::Client<es::HttpsConnector>) -> impl Stream<Item = Result<(), ()>> {
     client
         .stream()
         .map_ok(|event| {

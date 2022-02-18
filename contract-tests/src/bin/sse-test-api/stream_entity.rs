@@ -10,7 +10,7 @@ use eventsource_client as es;
 
 use crate::{Config, EventType};
 
-type Connector = es::TimeoutConnector<es::HttpsConnector>;
+type Connector = es::HttpsConnector;
 
 pub(crate) struct Inner {
     callback_counter: Mutex<i32>,
@@ -99,10 +99,6 @@ impl Inner {
 
         if let Some(delay_ms) = config.initial_delay_ms {
             reconnect_options = reconnect_options.delay(Duration::from_millis(delay_ms));
-        }
-
-        if let Some(read_timeout_ms) = config.read_timeout_ms {
-            client_builder = client_builder.read_timeout(Duration::from_millis(read_timeout_ms));
         }
 
         if let Some(headers) = &config.headers {
