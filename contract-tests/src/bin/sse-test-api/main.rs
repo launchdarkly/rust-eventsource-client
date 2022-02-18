@@ -70,7 +70,6 @@ async fn status() -> impl Responder {
     web::Json(Status {
         capabilities: vec![
             "comments".to_string(),
-            "retry".to_string(),
             "post".to_string(),
             "report".to_string(),
             "read-timeout".to_string(),
@@ -100,10 +99,6 @@ async fn stream(
         Err(_) => return HttpResponse::InternalServerError().body("Unable to retrieve handles"),
     };
 
-    *counter += 1;
-    stream_entity.start();
-    entities.insert(*counter, stream_entity);
-
     let stream_resource = match req.url_for("stop_stream", &[counter.to_string()]) {
         Ok(sr) => sr,
         Err(_) => {
@@ -111,6 +106,10 @@ async fn stream(
                 .body("Unable to generate stream response URL")
         }
     };
+
+    *counter += 1;
+    stream_entity.start();
+    entities.insert(*counter, stream_entity);
 
     let mut response = HttpResponse::Ok();
     response.insert_header(("Location", stream_resource.to_string()));
