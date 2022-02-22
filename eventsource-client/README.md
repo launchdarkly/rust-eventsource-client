@@ -30,7 +30,7 @@ client.stream()
 (Some boilerplate omitted for clarity; see [examples directory] for complete,
 working code.)
 
-[examples directory]: ../../tree/master/examples
+[examples directory]: https://github.com/launchdarkly/rust-eventsource-client/tree/master/examples
 
 ## Features
 
