@@ -30,8 +30,7 @@ client.stream()
 (Some boilerplate omitted for clarity; see [examples directory] for complete,
 working code.)
 
-[examples directory]: https://github.com/launchdarkly/rust-eventsource-client/tree/master/examples
-
+[examples directory]: https://github.com/launchdarkly/rust-eventsource-client/tree/master/eventsource-client/examples
 ## Features
 
 * tokio-based streaming client.
