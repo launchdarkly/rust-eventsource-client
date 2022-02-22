@@ -3,6 +3,7 @@ use std::{
     future::Future,
     mem,
     pin::Pin,
+    str::FromStr,
     task::{Context, Poll},
     time::Duration,
 };
@@ -11,7 +12,7 @@ use futures::{ready, Stream};
 use hyper::{
     body::{Bytes, HttpBody},
     client::{connect::Connect, ResponseFuture},
-    header::HeaderMap,
+    header::{HeaderMap, HeaderName, HeaderValue},
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
@@ -41,11 +42,14 @@ pub struct ClientBuilder {
 
 impl ClientBuilder {
     /// Set a HTTP header on the SSE request.
-    pub fn header(mut self, key: &'static str, value: &str) -> Result<ClientBuilder> {
-        let value = value
-            .parse()
-            .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
-        self.headers.insert(key, value);
+    pub fn header(mut self, name: &str, value: &str) -> Result<ClientBuilder> {
+        let name =
+            HeaderName::from_str(name).map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+
+        let value = HeaderValue::from_str(value)
+            .map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+
+        self.headers.insert(name, value);
         Ok(self)
     }
 
