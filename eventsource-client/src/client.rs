@@ -1,5 +1,4 @@
 use std::error::Error as StdError;
-use std::str::FromStr;
 use std::{
     fmt::{self, Debug, Display, Formatter},
     future::Future,
@@ -12,7 +11,7 @@ use std::{
 
 use futures::{ready, Stream};
 use hyper::{
-    body::{Bytes, HttpBody},
+    body::HttpBody,
     client::{
         connect::{Connect, Connection},
         ResponseFuture,
@@ -176,7 +175,9 @@ impl Client<()> {
     /// [`ClientBuilder`]: struct.ClientBuilder.html
     /// [`.stream()`]: #method.stream
     pub fn for_url(url: &str) -> Result<ClientBuilder> {
-        let url = url.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        let url = url
+            .parse()
+            .map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
 
         let mut header_map = HeaderMap::new();
         header_map.insert("Accept", HeaderValue::from_static("text/event-stream"));
@@ -304,9 +305,10 @@ impl<C> ReconnectingRequest<C> {
             body = Body::from(props_body.to_string());
         }
 
+        // todo(cwaldren): Should this be BAD_REQUEST?
         let request = request_builder
             .body(body)
-            .map_err(|e| Error::HttpRequest(Box::new(e)))?;
+            .map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
 
         Ok(self.http.request(request))
     }

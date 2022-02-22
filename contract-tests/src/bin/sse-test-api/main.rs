@@ -21,8 +21,6 @@ struct Config {
     stream_url: String,
     /// The URL of a callback endpoint created by the test harness .
     callback_url: String,
-    /// A string describing the current test, if desired for logging.
-    tag: Option<String>,
     /// An optional integer specifying the initial reconnection delay parameter, in
     /// milliseconds. Not all SSE client implementations allow this to be configured, but the
     /// test harness will send a value anyway in an attempt to avoid having reconnection tests
