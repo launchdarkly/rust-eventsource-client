@@ -5,13 +5,14 @@ use std::{
     future::Future,
     mem,
     pin::Pin,
+    str::FromStr,
     task::{Context, Poll},
     time::Duration,
 };
 
 use futures::{ready, Stream};
 use hyper::{
-    body::HttpBody,
+    body::{Bytes, HttpBody},
     client::{
         connect::{Connect, Connection},
         ResponseFuture,
@@ -58,8 +59,11 @@ pub struct ClientBuilder {
 impl ClientBuilder {
     /// Set a HTTP header on the SSE request.
     pub fn header(mut self, name: &str, value: &str) -> Result<ClientBuilder> {
-        let name = HeaderName::from_str(name).map_err(|e| Error::HttpRequest(Box::new(e)))?;
-        let value = HeaderValue::from_str(value).map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        let name =
+            HeaderName::from_str(name).map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+
+        let value = HeaderValue::from_str(value)
+            .map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
 
         self.headers.insert(name, value);
         Ok(self)
@@ -303,6 +307,7 @@ impl<C> ReconnectingRequest<C> {
         let request = request_builder
             .body(body)
             .map_err(|e| Error::HttpRequest(Box::new(e)))?;
+
         Ok(self.http.request(request))
     }
 
@@ -400,10 +405,8 @@ where
                         debug!("HTTP response: {:#?}", resp);
 
                         if !resp.status().is_success() {
-                            let e = StatusError {
-                                status: resp.status(),
-                            };
-                            return Poll::Ready(Some(Err(Error::HttpRequest(Box::new(e)))));
+                            self.as_mut().project().state.set(State::New);
+                            return Poll::Ready(Some(Err(Error::HttpRequest(resp.status()))));
                         }
 
                         self.as_mut().reset_backoff();
@@ -417,6 +420,7 @@ where
                         // poll after it was already ready
                         warn!("request returned an error: {}", e);
                         if !*retry {
+                            self.as_mut().project().state.set(State::New);
                             return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
                         }
                         let duration = self.as_mut().backoff();
