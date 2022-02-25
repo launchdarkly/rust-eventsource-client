@@ -1,34 +1,7 @@
-[package]
-name = "eventsource-client"
-version = "0.7.0"
-description = "Client for the Server-Sent Events protocol (aka EventSource)"
-repository = "https://github.com/launchdarkly/rust-eventsource-client"
-authors = ["Sam Stokes <sstokes@launchdarkly.com>"]
-edition = "2018"
-license = "Apache-2.0"
-exclude = [
-  ".circleci/*",
+[workspace]
+
+members = [
+  "contract-tests",
+  "eventsource-client"
 ]
 
-[dependencies]
-futures = "0.3.12"
-hyper = { version = "0.14.4", features = ["client", "http1", "tcp"] }
-hyper-rustls = { version = "0.22.1", optional = true }
-log = "0.4.6"
-pin-project = "1.0.5"
-tokio = { version = "1.2.0", features = ["time"] }
-
-[dev-dependencies]
-env_logger = "0.7.1"
-maplit = "1.0.1"
-simplelog = "0.5.3"
-tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
-test-case = "1.2.0"
-
-[features]
-default = ["rustls"]
-rustls = ["hyper-rustls", "hyper/http2"]
-
-[[example]]
-name = "tail"
-required-features = ["rustls"]

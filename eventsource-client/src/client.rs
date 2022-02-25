@@ -3,6 +3,7 @@ use std::{
     future::Future,
     mem,
     pin::Pin,
+    str::FromStr,
     task::{Context, Poll},
     time::Duration,
 };
@@ -11,7 +12,7 @@ use futures::{ready, Stream};
 use hyper::{
     body::{Bytes, HttpBody},
     client::{connect::Connect, ResponseFuture},
-    header::HeaderMap,
+    header::{HeaderMap, HeaderName, HeaderValue},
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
@@ -41,9 +42,14 @@ pub struct ClientBuilder {
 
 impl ClientBuilder {
     /// Set a HTTP header on the SSE request.
-    pub fn header(mut self, key: &'static str, value: &str) -> Result<ClientBuilder> {
-        let value = value.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
-        self.headers.insert(key, value);
+    pub fn header(mut self, name: &str, value: &str) -> Result<ClientBuilder> {
+        let name =
+            HeaderName::from_str(name).map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+
+        let value = HeaderValue::from_str(value)
+            .map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+
+        self.headers.insert(name, value);
         Ok(self)
     }
 
@@ -56,7 +62,7 @@ impl ClientBuilder {
         self
     }
 
-    fn build_with_conn<C>(self, conn: C) -> Client<C>
+    pub fn build_with_conn<C>(self, conn: C) -> Client<C>
     where
         C: Connect + Clone,
     {
@@ -113,7 +119,9 @@ impl Client<()> {
     /// [`ClientBuilder`]: struct.ClientBuilder.html
     /// [`.stream()`]: #method.stream
     pub fn for_url(url: &str) -> Result<ClientBuilder> {
-        let url = url.parse().map_err(|e| Error::HttpRequest(Box::new(e)))?;
+        let url = url
+            .parse()
+            .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
         Ok(ClientBuilder {
             url,
             headers: HeaderMap::new(),
@@ -205,7 +213,7 @@ impl<C> ReconnectingRequest<C> {
         *request.headers_mut().unwrap() = self.props.headers.clone();
         let request = request
             .body(Body::empty())
-            .map_err(|e| Error::HttpRequest(Box::new(e)))?;
+            .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
         Ok(self.http.request(request))
     }
 
@@ -257,8 +265,10 @@ where
         loop {
             trace!("ReconnectingRequest::poll loop({:?})", &self.state);
 
-            let state = self.as_mut().project().state.project();
-            let new_state = match state {
+            let this = self.as_mut().project();
+            let state = this.state.project();
+
+            match state {
                 // New immediately transitions to Connecting, and exists only
                 // to ensure that we only connect when polled.
                 StateProj::New => {
@@ -266,31 +276,39 @@ where
                         Err(e) => return Poll::Ready(Some(Err(e))),
                         Ok(r) => r,
                     };
-                    State::Connecting {
-                        resp,
-                        retry: self.props.reconnect_opts.retry_initial,
-                    }
+                    let retry = self.props.reconnect_opts.retry_initial;
+                    self.as_mut()
+                        .project()
+                        .state
+                        .set(State::Connecting { resp, retry })
                 }
                 StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
                     Ok(resp) => {
                         debug!("HTTP response: {:#?}", resp);
 
                         if !resp.status().is_success() {
-                            let e = StatusError {
-                                status: resp.status(),
-                            };
-                            return Poll::Ready(Some(Err(Error::HttpRequest(Box::new(e)))));
+                            self.as_mut().project().state.set(State::New);
+                            return Poll::Ready(Some(Err(Error::HttpRequest(resp.status()))));
                         }
 
                         self.as_mut().reset_backoff();
-                        State::Connected(resp.into_body())
+                        self.as_mut()
+                            .project()
+                            .state
+                            .set(State::Connected(resp.into_body()))
                     }
                     Err(e) => {
                         warn!("request returned an error: {}", e);
                         if !*retry {
+                            self.as_mut().project().state.set(State::New);
                             return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
                         }
-                        State::WaitingToReconnect(delay(self.as_mut().backoff(), "retrying"))
+
+                        let duration = self.as_mut().backoff();
+                        self.as_mut()
+                            .project()
+                            .state
+                            .set(State::WaitingToReconnect(delay(duration, "retrying")))
                     }
                 },
                 StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
@@ -300,10 +318,11 @@ where
                     res => {
                         // reconnect
                         if self.props.reconnect_opts.reconnect {
-                            State::WaitingToReconnect(delay(
-                                self.as_mut().backoff(),
-                                "reconnecting",
-                            ))
+                            let duration = self.as_mut().backoff();
+                            self.as_mut()
+                                .project()
+                                .state
+                                .set(State::WaitingToReconnect(delay(duration, "reconnecting")))
                         } else {
                             return Poll::Ready(
                                 res.map(|r| r.map_err(|e| Error::HttpStream(Box::new(e)))),
@@ -315,10 +334,12 @@ where
                     ready!(delay.poll(cx));
                     info!("Reconnecting");
                     let resp = self.send_request()?;
-                    State::Connecting { retry: true, resp }
+                    self.as_mut()
+                        .project()
+                        .state
+                        .set(State::Connecting { retry: true, resp })
                 }
             };
-            self.as_mut().project().state.set(new_state);
         }
     }
 }

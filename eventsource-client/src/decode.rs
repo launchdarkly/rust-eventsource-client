@@ -637,7 +637,7 @@ mod tests {
             Ready(Some(Err(err))) => {
                 assert!(err.is_http_stream_error());
                 let description = format!("{}", err.source().unwrap());
-                assert!(description.contains("read error"), description);
+                assert!(description.contains("read error"), "{}", description);
             }
             res => panic!("expected HttpStream error, got {:?}", res),
         }
@@ -650,7 +650,7 @@ mod tests {
             Ready(Some(Err(err))) => {
                 assert!(err.is_http_stream_error());
                 let description = format!("{}", err.source().unwrap());
-                assert!(description.contains("read error"), description);
+                assert!(description.contains("read error"), "{}", description);
             }
             res => panic!("expected HttpStream error, got {:?}", res),
         }
@@ -668,7 +668,7 @@ mod tests {
             Ready(Some(Err(err))) => {
                 assert!(err.is_http_stream_error());
                 let description = format!("{}", err.source().unwrap());
-                assert!(description.contains("read error"), description);
+                assert!(description.contains("read error"), "{}", description);
             }
             res => panic!("expected HttpStream error, got {:?}", res),
         }
@@ -758,7 +758,7 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
         match s.poll_next_unpin(&mut cx) {
             Poll::Ready(None) => (),
-            Poll::Ready(Some(event)) => panic!(format!("expected eof, got {:?}", event)),
+            Poll::Ready(Some(event)) => panic!("expected eof, got {:?}", event),
             Poll::Pending => panic!("expected eof, got Pending"),
         }
     }
@@ -771,7 +771,7 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
         match s.poll_next_unpin(&mut cx) {
             Poll::Ready(Some(Ok(event))) => event,
-            Poll::Ready(Some(Err(e))) => panic!(format!("expected eof, got error: {:?}", e)),
+            Poll::Ready(Some(Err(e))) => panic!("expected eof, got error: {:?}", e),
             Poll::Ready(None) => panic!("expected event, got eof"),
             Poll::Pending => panic!("expected event, got Pending"),
         }
