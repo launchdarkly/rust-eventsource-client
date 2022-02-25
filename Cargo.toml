@@ -4,4 +4,3 @@ members = [
   "contract-tests",
   "eventsource-client"
 ]
-
