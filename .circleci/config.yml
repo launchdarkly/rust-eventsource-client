@@ -25,21 +25,12 @@ jobs:
       - store_artifacts:
           path: target/doc
           destination: doc
-
       - run:
-          name: Build sse test service
-          command: cargo build --features build-binary --bin sse-test-api
-
-      - run:
-          name: Run the sse test service
-          command: RUST_LOG=info ./target/debug/sse-test-api
+          command: make start-contract-test-service
           background: true
-
       - run:
-          name: Run the sse test service
-          command: |
-            curl -s https://raw.githubusercontent.com/launchdarkly/sse-contract-tests/v0.0.3/downloader/run.sh | \
-            VERSION=v0 PARAMS="-url http://localhost:8080 -debug -stop-service-at-end" sh
+          name: run contract tests
+          command: make run-contract-tests
 
   publish:
     docker:
