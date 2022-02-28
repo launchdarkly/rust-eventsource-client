@@ -25,6 +25,12 @@ jobs:
       - store_artifacts:
           path: target/doc
           destination: doc
+      - run:
+          command: make start-contract-test-service
+          background: true
+      - run:
+          name: run contract tests
+          command: make run-contract-tests
 
   publish:
     docker:
