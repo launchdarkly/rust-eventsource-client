@@ -1,14 +1,5 @@
-use std::{
-    fmt::{self, Debug, Display, Formatter},
-    future::Future,
-    mem,
-    pin::Pin,
-    str::FromStr,
-    task::{Context, Poll},
-    time::Duration,
-};
-
-use futures::{ready, Stream};
+use futures::stream::BoxStream as FuturesBoxStream;
+use futures::{ready, Stream, StreamExt, TryStream, TryStreamExt};
 use hyper::{
     body::{Bytes, HttpBody},
     client::{connect::Connect, ResponseFuture},
@@ -19,15 +10,29 @@ use hyper::{
 use hyper_rustls::HttpsConnector as RustlsConnector;
 use log::{debug, info, trace, warn};
 use pin_project::pin_project;
+use std::{
+    boxed,
+    fmt::{self, Debug, Display, Formatter},
+    future::Future,
+    mem,
+    pin::Pin,
+    str::FromStr,
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio::time::Sleep;
 
 use super::config::ReconnectOptions;
 use super::decode::Decoded;
 use super::error::{Error, Result};
 
+use crate::Event;
 pub use hyper::client::HttpConnector;
+
 #[cfg(feature = "rustls")]
 pub type HttpsConnector = RustlsConnector<HttpConnector>;
+
+pub type BoxStream<'a, T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync + 'a>>;
 
 /*
  * TODO remove debug output
@@ -62,39 +67,42 @@ impl ClientBuilder {
         self
     }
 
-    pub fn build_with_conn<C>(self, conn: C) -> Client<C>
+    pub fn build_with_conn<C>(self, conn: C) -> Pin<Box<dyn Client>>
     where
-        C: Connect + Clone,
+        C: Connect + Clone + Send + Sync + 'static + hyper::service::Service<Uri>,
     {
-        Client {
+        Box::pin(ClientImpl {
             http: hyper::Client::builder().build(conn),
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
                 reconnect_opts: self.reconnect_opts,
             },
-        }
+        })
     }
 
-    pub fn build_http(self) -> Client<HttpConnector> {
+    pub fn build_http(self) -> Pin<Box<dyn Client>> {
         self.build_with_conn(HttpConnector::new())
     }
 
     #[cfg(feature = "rustls")]
-    pub fn build(self) -> Client<HttpsConnector> {
+    pub fn build(self) -> Pin<Box<dyn Client>> {
         let conn = HttpsConnector::with_native_roots();
         self.build_with_conn(conn)
     }
 
-    pub fn build_with_http_client<C>(self, http: hyper::Client<C>) -> Client<C> {
-        Client {
+    pub fn build_with_http_client<C>(self, http: hyper::Client<C>) -> Pin<Box<dyn Client>>
+    where
+        C: Connect + Clone + Send + Sync + 'static + hyper::service::Service<Uri>,
+    {
+        Box::pin(ClientImpl {
             http,
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
                 reconnect_opts: self.reconnect_opts,
             },
-        }
+        })
     }
 }
 
@@ -105,34 +113,34 @@ struct RequestProps {
     reconnect_opts: ReconnectOptions,
 }
 
+pub trait Client {
+    fn stream(&self) -> BoxStream<Result<Event>>;
+}
+
 /// Client that connects to a server using the Server-Sent Events protocol
 /// and consumes the event stream indefinitely.
-pub struct Client<C> {
+struct ClientImpl<C> {
     http: hyper::Client<C>,
     request_props: RequestProps,
 }
 
-impl Client<()> {
-    /// Construct a new `Client` (via a [`ClientBuilder`]). This will not
-    /// perform any network activity until [`.stream()`] is called.
-    ///
-    /// [`ClientBuilder`]: struct.ClientBuilder.html
-    /// [`.stream()`]: #method.stream
-    pub fn for_url(url: &str) -> Result<ClientBuilder> {
-        let url = url
-            .parse()
-            .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
-        Ok(ClientBuilder {
-            url,
-            headers: HeaderMap::new(),
-            reconnect_opts: ReconnectOptions::default(),
-        })
-    }
+pub fn for_url(url: &str) -> Result<ClientBuilder> {
+    let url = url
+        .parse()
+        .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
+    Ok(ClientBuilder {
+        url,
+        headers: HeaderMap::new(),
+        reconnect_opts: ReconnectOptions::default(),
+    })
 }
 
 pub type EventStream<C> = Decoded<ReconnectingRequest<C>>;
 
-impl<C> Client<C> {
+impl<C> Client for ClientImpl<C>
+where
+    C: Connect + Clone + Send + Sync + 'static + hyper::service::Service<Uri>,
+{
     /// Connect to the server and begin consuming the stream. Produces a
     /// [`Stream`] of [`Event`](crate::Event)s wrapped in [`Result`].
     ///
@@ -140,25 +148,17 @@ impl<C> Client<C> {
     ///
     /// After the first successful connection, the stream will
     /// reconnect for retryable errors.
-    pub fn stream(&self) -> EventStream<C>
-    where
-        C: Connect + Clone + Send + Sync + 'static,
-    {
-        Decoded::new(ReconnectingRequest::new(
-            self.http.clone(),
-            self.request_props.clone(),
-        ))
+    fn stream(&self) -> BoxStream<Result<Event>> {
+        let r = ReconnectingRequest::new(self.http.clone(), self.request_props.clone());
+        let d = Decoded::new(r);
+        Box::pin(d)
+        // FuturesBoxStream::new(d)
+        // FuturesBoxStream::new(Decoded::new(ReconnectingRequest::new(
+        //     self.http.clone(),
+        //     self.request_props.clone(),
+        // )))
+        // todo!()
     }
-}
-
-#[must_use = "streams do nothing unless polled"]
-#[pin_project]
-pub struct ReconnectingRequest<C> {
-    http: hyper::Client<C>,
-    props: RequestProps,
-    #[pin]
-    state: State,
-    next_reconnect_delay: Duration,
 }
 
 #[allow(clippy::large_enum_variant)] // false positive
@@ -192,6 +192,16 @@ impl Debug for State {
     }
 }
 
+#[must_use = "streams do nothing unless polled"]
+#[pin_project]
+pub struct ReconnectingRequest<C> {
+    http: hyper::Client<C>,
+    props: RequestProps,
+    #[pin]
+    state: State,
+    next_reconnect_delay: Duration,
+}
+
 impl<C> ReconnectingRequest<C> {
     fn new(http: hyper::Client<C>, props: RequestProps) -> ReconnectingRequest<C> {
         let reconnect_delay = props.reconnect_opts.delay;
@@ -202,9 +212,7 @@ impl<C> ReconnectingRequest<C> {
             next_reconnect_delay: reconnect_delay,
         }
     }
-}
 
-impl<C> ReconnectingRequest<C> {
     fn send_request(&self) -> Result<ResponseFuture>
     where
         C: Connect + Clone + Send + Sync + 'static,
@@ -235,27 +243,9 @@ impl<C> ReconnectingRequest<C> {
     }
 }
 
-fn delay(dur: Duration, description: &str) -> Sleep {
-    info!("Waiting {:?} before {}", dur, description);
-    tokio::time::sleep(dur)
-}
-
-#[derive(Debug)]
-struct StatusError {
-    status: StatusCode,
-}
-
-impl Display for StatusError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Invalid status code: {}", self.status)
-    }
-}
-
-impl std::error::Error for StatusError {}
-
 impl<C> Stream for ReconnectingRequest<C>
 where
-    C: Connect + Clone + Send + Sync + 'static,
+    C: Connect + Clone + Send + Sync + 'static + hyper::service::Service<Uri>,
 {
     type Item = Result<Bytes>;
 
@@ -343,3 +333,21 @@ where
         }
     }
 }
+
+fn delay(dur: Duration, description: &str) -> Sleep {
+    info!("Waiting {:?} before {}", dur, description);
+    tokio::time::sleep(dur)
+}
+
+#[derive(Debug)]
+struct StatusError {
+    status: StatusCode,
+}
+
+impl Display for StatusError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Invalid status code: {}", self.status)
+    }
+}
+
+impl std::error::Error for StatusError {}
