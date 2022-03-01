@@ -1,5 +1,4 @@
-use futures::stream::BoxStream as FuturesBoxStream;
-use futures::{ready, Stream, StreamExt, TryStream, TryStreamExt};
+use futures::{ready, Stream};
 use hyper::{
     body::{Bytes, HttpBody},
     client::{connect::Connect, ResponseFuture},
@@ -149,15 +148,10 @@ where
     /// After the first successful connection, the stream will
     /// reconnect for retryable errors.
     fn stream(&self) -> BoxStream<Result<Event>> {
-        let r = ReconnectingRequest::new(self.http.clone(), self.request_props.clone());
-        let d = Decoded::new(r);
-        Box::pin(d)
-        // FuturesBoxStream::new(d)
-        // FuturesBoxStream::new(Decoded::new(ReconnectingRequest::new(
-        //     self.http.clone(),
-        //     self.request_props.clone(),
-        // )))
-        // todo!()
+        Box::pin(Decoded::new(ReconnectingRequest::new(
+            self.http.clone(),
+            self.request_props.clone(),
+        )))
     }
 }
 

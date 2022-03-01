@@ -1,14 +1,12 @@
 use actix_web::rt::task::JoinHandle;
-use futures::{Stream, StreamExt, TryStream, TryStreamExt};
+use futures::TryStreamExt;
 use log::error;
 use std::{
-    pin,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use eventsource_client as es;
-use std::pin::Pin;
 
 use crate::{Config, EventType};
 

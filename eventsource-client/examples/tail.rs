@@ -1,10 +1,8 @@
 use std::{env, process, str::from_utf8, time::Duration};
 
-use futures::stream::{MapErr, MapOk};
-use futures::{Stream, TryStreamExt};
+use futures::TryStreamExt;
 
 use eventsource_client as es;
-use eventsource_client::BoxStream;
 
 #[tokio::main]
 async fn main() -> Result<(), es::Error> {

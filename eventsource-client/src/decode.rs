@@ -8,7 +8,7 @@ use std::{
 use futures::{
     ready,
     stream::{Fuse, Stream},
-    StreamExt, TryStream, TryStreamExt,
+    StreamExt,
 };
 use hyper::body::Bytes;
 use log::{debug, log_enabled, trace};
