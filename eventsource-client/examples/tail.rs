@@ -30,7 +30,6 @@ async fn main() -> Result<(), es::Error> {
         )
         .build();
 
-    let stream = client.stream();
     let mut stream = tail_events(client.stream());
 
     while let Ok(Some(_)) = stream.try_next().await {}
