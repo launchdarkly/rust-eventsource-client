@@ -3,6 +3,7 @@ use hyper::{
     body::{Bytes, HttpBody},
     client::{connect::Connect, ResponseFuture},
     header::{HeaderMap, HeaderName, HeaderValue},
+    service::Service,
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
@@ -68,7 +69,7 @@ impl ClientBuilder {
 
     pub fn build_with_conn<C>(self, conn: C) -> Pin<Box<dyn Client>>
     where
-        C: Connect + Clone + Send + Sync + 'static + hyper::service::Service<Uri>,
+        C: Service<Uri> + Connect + Clone + Send + Sync + 'static,
     {
         Box::pin(ClientImpl {
             http: hyper::Client::builder().build(conn),
@@ -92,7 +93,7 @@ impl ClientBuilder {
 
     pub fn build_with_http_client<C>(self, http: hyper::Client<C>) -> Pin<Box<dyn Client>>
     where
-        C: Connect + Clone + Send + Sync + 'static + hyper::service::Service<Uri>,
+        C: Service<Uri> + Connect + Clone + Send + Sync + 'static,
     {
         Box::pin(ClientImpl {
             http,
@@ -112,7 +113,7 @@ struct RequestProps {
     reconnect_opts: ReconnectOptions,
 }
 
-pub trait Client {
+pub trait Client: Send + Sync {
     fn stream(&self) -> BoxStream<Result<Event>>;
 }
 
@@ -138,7 +139,7 @@ pub type EventStream<C> = Decoded<ReconnectingRequest<C>>;
 
 impl<C> Client for ClientImpl<C>
 where
-    C: Connect + Clone + Send + Sync + 'static + hyper::service::Service<Uri>,
+    C: Service<Uri> + Connect + Clone + Send + Sync + 'static,
 {
     /// Connect to the server and begin consuming the stream. Produces a
     /// [`Stream`] of [`Event`](crate::Event)s wrapped in [`Result`].
@@ -239,7 +240,7 @@ impl<C> ReconnectingRequest<C> {
 
 impl<C> Stream for ReconnectingRequest<C>
 where
-    C: Connect + Clone + Send + Sync + 'static + hyper::service::Service<Uri>,
+    C: Service<Uri> + Connect + Clone + Send + Sync + 'static,
 {
     type Item = Result<Bytes>;
 

@@ -1,6 +1,7 @@
 use actix_web::rt::task::JoinHandle;
 use futures::TryStreamExt;
 use log::error;
+use std::pin::Pin;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -15,7 +16,7 @@ type Connector = es::HttpsConnector;
 pub(crate) struct Inner {
     callback_counter: Mutex<i32>,
     callback_url: String,
-    client: Box<dyn es::Client>,
+    client: Pin<Box<dyn es::Client>>,
 }
 
 impl Inner {
@@ -88,7 +89,7 @@ impl Inner {
         true
     }
 
-    fn build_client(config: &Config) -> Result<Box<dyn es::Client>, String> {
+    fn build_client(config: &Config) -> Result<Pin<Box<dyn es::Client>>, String> {
         let mut client_builder = match es::for_url(&config.stream_url) {
             Ok(cb) => cb,
             Err(e) => return Err(format!("Failed to create client builder {:?}", e)),
