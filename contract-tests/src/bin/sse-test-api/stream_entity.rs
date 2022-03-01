@@ -11,8 +11,6 @@ use eventsource_client as es;
 
 use crate::{Config, EventType};
 
-type Connector = es::HttpsConnector;
-
 pub(crate) struct Inner {
     callback_counter: Mutex<i32>,
     callback_url: String,

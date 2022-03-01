@@ -31,7 +31,14 @@ pub use hyper::client::HttpConnector;
 #[cfg(feature = "rustls")]
 pub type HttpsConnector = RustlsConnector<HttpConnector>;
 
+/* Copied from futures::stream::BoxStream, but modified to require additional Sync bound
+so it can be shared between threads. */
 pub type BoxStream<'a, T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync + 'a>>;
+
+/// This trait is sealed and cannot be implemented for types outside this crate.
+pub trait Client: Send + Sync + private::Sealed {
+    fn stream(&self) -> BoxStream<Result<Event>>;
+}
 
 /*
  * TODO remove debug output
@@ -112,12 +119,9 @@ struct RequestProps {
     reconnect_opts: ReconnectOptions,
 }
 
-pub trait Client: Send + Sync {
-    fn stream(&self) -> BoxStream<Result<Event>>;
-}
-
-/// Client that connects to a server using the Server-Sent Events protocol
+/// A client implementation that connects to a server using the Server-Sent Events protocol
 /// and consumes the event stream indefinitely.
+/// Can be parameterized with different hyper Connectors, such as HTTP or HTTPS.
 struct ClientImpl<C> {
     http: hyper::Client<C>,
     request_props: RequestProps,
@@ -133,8 +137,6 @@ pub fn for_url(url: &str) -> Result<ClientBuilder> {
         reconnect_opts: ReconnectOptions::default(),
     })
 }
-
-pub type EventStream<C> = Decoded<ReconnectingRequest<C>>;
 
 impl<C> Client for ClientImpl<C>
 where
@@ -345,3 +347,10 @@ impl Display for StatusError {
 }
 
 impl std::error::Error for StatusError {}
+
+mod private {
+    use crate::client::ClientImpl;
+
+    pub trait Sealed {}
+    impl<C> Sealed for ClientImpl<C> {}
+}
