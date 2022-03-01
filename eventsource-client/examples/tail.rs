@@ -1,8 +1,9 @@
-use es::{BoxStream, Event};
+use es::{BoxStream, Client, Event};
 use futures::{Stream, TryStreamExt};
 use std::{env, process, str::from_utf8, time::Duration};
 
 use eventsource_client as es;
+use eventsource_client::HttpsConnector;
 
 #[tokio::main]
 async fn main() -> Result<(), es::Error> {

@@ -73,42 +73,42 @@ impl ClientBuilder {
         self
     }
 
-    pub fn build_with_conn<C>(self, conn: C) -> Pin<Box<dyn Client>>
+    pub fn build_with_conn<C>(self, conn: C) -> impl Client
     where
         C: Connect + Clone + Send + Sync + 'static,
     {
-        Box::pin(ClientImpl {
+        ClientImpl {
             http: hyper::Client::builder().build(conn),
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
                 reconnect_opts: self.reconnect_opts,
             },
-        })
+        }
     }
 
-    pub fn build_http(self) -> Pin<Box<dyn Client>> {
+    pub fn build_http(self) -> impl Client {
         self.build_with_conn(HttpConnector::new())
     }
 
     #[cfg(feature = "rustls")]
-    pub fn build(self) -> Pin<Box<dyn Client>> {
+    pub fn build(self) -> impl Client {
         let conn = HttpsConnector::with_native_roots();
         self.build_with_conn(conn)
     }
 
-    pub fn build_with_http_client<C>(self, http: hyper::Client<C>) -> Pin<Box<dyn Client>>
+    pub fn build_with_http_client<C>(self, http: hyper::Client<C>) -> impl Client
     where
         C: Connect + Clone + Send + Sync + 'static,
     {
-        Box::pin(ClientImpl {
+        ClientImpl {
             http,
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
                 reconnect_opts: self.reconnect_opts,
             },
-        })
+        }
     }
 }
 

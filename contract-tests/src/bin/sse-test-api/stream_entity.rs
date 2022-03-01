@@ -108,7 +108,9 @@ impl Inner {
             }
         }
 
-        Ok(client_builder.reconnect(reconnect_options.build()).build())
+        Ok(Box::pin(
+            client_builder.reconnect(reconnect_options.build()).build(),
+        ))
     }
 }
 
