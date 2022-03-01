@@ -1,6 +1,6 @@
+use es::{BoxStream, Event};
+use futures::{Stream, TryStreamExt};
 use std::{env, process, str::from_utf8, time::Duration};
-
-use futures::TryStreamExt;
 
 use eventsource_client as es;
 
@@ -30,8 +30,16 @@ async fn main() -> Result<(), es::Error> {
         )
         .build();
 
-    let mut stream = client
-        .stream()
+    let stream = client.stream();
+    let mut stream = tail_events(client.stream());
+
+    while let Ok(Some(_)) = stream.try_next().await {}
+
+    Ok(())
+}
+
+fn tail_events(stream: BoxStream<es::Result<Event>>) -> impl Stream<Item = Result<(), ()>> + '_ {
+    stream
         .map_ok(|event| {
             println!(
                 "got an event: {}\n{}",
@@ -39,25 +47,5 @@ async fn main() -> Result<(), es::Error> {
                 from_utf8(event.field("data").unwrap_or_default()).unwrap_or_default()
             )
         })
-        .map_err(|err| eprintln!("error streaming events: {:?}", err));
-
-    while let Ok(Some(_)) = stream.try_next().await {}
-
-    Ok(())
+        .map_err(|err| eprintln!("error streaming events: {:?}", err))
 }
-
-// fn tail_events(
-//     stream: &BoxStream<es::Result<es::Event>>,
-// ) -> impl Stream<Item = Result<es::Event, es::Error>> {
-//     stream.map_ok(|event| println!("hi"))
-//     // client
-//     //     .stream()
-//     //     .map_ok(|event| {
-//     //         println!(
-//     //             "got an event: {}\n{}",
-//     //             event.event_type,
-//     //             from_utf8(event.field("data").unwrap_or_default()).unwrap_or_default()
-//     //         )
-//     //     })
-//     //     .map_err(|err| eprintln!("error streaming events: {:?}", err))
-// }
