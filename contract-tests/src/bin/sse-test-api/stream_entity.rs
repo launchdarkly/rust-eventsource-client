@@ -10,12 +10,10 @@ use eventsource_client as es;
 
 use crate::{Config, EventType};
 
-type Connector = es::HttpsConnector;
-
 pub(crate) struct Inner {
     callback_counter: Mutex<i32>,
     callback_url: String,
-    client: es::Client<Connector>,
+    client: Box<dyn es::Client>,
 }
 
 impl Inner {
@@ -30,9 +28,8 @@ impl Inner {
     }
 
     pub(crate) async fn start(&self) {
-        let stream = self.client.stream();
+        let mut stream = self.client.stream();
 
-        let mut stream = Box::pin(stream);
         let client = reqwest::Client::new();
 
         loop {
@@ -89,8 +86,8 @@ impl Inner {
         true
     }
 
-    fn build_client(config: &Config) -> Result<es::Client<Connector>, String> {
-        let mut client_builder = match es::Client::for_url(&config.stream_url) {
+    fn build_client(config: &Config) -> Result<Box<dyn es::Client>, String> {
+        let mut client_builder = match es::ClientBuilder::for_url(&config.stream_url) {
             Ok(cb) => cb,
             Err(e) => return Err(format!("Failed to create client builder {:?}", e)),
         };
@@ -110,7 +107,9 @@ impl Inner {
             }
         }
 
-        Ok(client_builder.reconnect(reconnect_options.build()).build())
+        Ok(Box::new(
+            client_builder.reconnect(reconnect_options.build()).build(),
+        ))
     }
 }
 
