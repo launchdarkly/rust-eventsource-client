@@ -3,13 +3,14 @@ use hyper::StatusCode;
 /// Error type returned from this library's functions.
 #[derive(Debug)]
 pub enum Error {
+    TimedOut,
     StreamClosed,
-    /// An invalid request parameter
-    InvalidParameter(Box<dyn std::error::Error + Send + 'static>),
     /// The HTTP request failed.
     HttpRequest(StatusCode),
     /// An error reading from the HTTP response body.
     HttpStream(Box<dyn std::error::Error + Send + 'static>),
+    /// The HTTP response stream ended
+    Eof,
     /// The HTTP response stream ended unexpectedly (e.g. in the
     /// middle of an event).
     UnexpectedEof,
@@ -17,6 +18,7 @@ pub enum Error {
     InvalidLine(String),
     /// Encountered an event type that is not a valid UTF-8 byte sequence.
     InvalidEventType(std::str::Utf8Error),
+    InvalidEvent,
     /// An unexpected failure occurred.
     Unexpected(Box<dyn std::error::Error + Send + 'static>),
 }

@@ -39,17 +39,24 @@ struct Config {
 enum EventType {
     #[serde(rename = "event")]
     Event { event: Event },
+    #[serde(rename = "comment")]
+    Comment { comment: String },
     #[serde(rename = "error")]
     Error { error: String },
 }
 
-impl From<es::Event> for EventType {
-    fn from(event: es::Event) -> Self {
-        Self::Event {
-            event: Event {
-                event_type: event.event_type.clone(),
-                data: String::from_utf8(event.field("data").unwrap_or_default().to_vec()).unwrap(),
-                id: String::from_utf8(event.field("id").unwrap_or_default().to_vec()).unwrap(),
+impl From<es::SSE> for EventType {
+    fn from(event: es::SSE) -> Self {
+        match event {
+            es::SSE::Event(evt) => Self::Event {
+                event: Event {
+                    event_type: evt.event_type,
+                    data: String::from_utf8(evt.data.to_vec()).unwrap(),
+                    id: String::from_utf8(evt.id.to_vec()).unwrap(),
+                },
+            },
+            es::SSE::Comment(comment) => Self::Comment {
+                comment: String::from_utf8(comment).unwrap(),
             },
         }
     }

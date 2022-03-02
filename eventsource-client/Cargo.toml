@@ -26,6 +26,7 @@ env_logger = "0.7.1"
 maplit = "1.0.1"
 simplelog = "0.5.3"
 tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
+test-case = "1.2.3"
 
 [features]
 default = ["rustls"]
