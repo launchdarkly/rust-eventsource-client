@@ -1,5 +1,5 @@
 TEMP_TEST_OUTPUT=/tmp/contract-test-service.log
-SKIPFLAGS = -skip 'linefeeds' -skip 'basic parsing' -skip 'HTTP behavior' -skip 'reconnection'
+SKIPFLAGS = -skip 'basic parsing' -skip 'HTTP behavior' -skip 'reconnection'
 
 build-contract-tests:
 	@cargo build
