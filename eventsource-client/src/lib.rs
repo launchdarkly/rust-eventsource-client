@@ -1,12 +1,12 @@
 //! Client for the [Server-Sent Events] protocol (aka [EventSource]).
 //!
 //! ```
-//! use eventsource_client::Client;
-//! # use futures::{Stream, TryStreamExt};
-//!
+//! use futures::{Stream, TryStreamExt};
+//! use eventsource_client as es;
+//! use es::{Client, Error};
 //! # #[tokio::main]
-//! # async fn main() -> Result<(), eventsource_client::Error> {
-//! let mut client = eventsource_client::for_url("https://example.com/stream")?
+//! # async fn main() -> Result<(), Error> {
+//! let mut client = es::ClientBuilder::for_url("https://example.com/stream")?
 //!     .header("Authorization", "Basic username:password")?
 //!     .build();
 //!

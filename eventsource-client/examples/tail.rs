@@ -18,7 +18,7 @@ async fn main() -> Result<(), es::Error> {
     let url = &args[1];
     let auth_header = &args[2];
 
-    let client = es::for_url(url)?
+    let client = es::ClientBuilder::for_url(url)?
         .header("Authorization", auth_header)?
         .reconnect(
             es::ReconnectOptions::reconnect(true)

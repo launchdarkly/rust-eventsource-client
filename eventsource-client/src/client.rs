@@ -52,6 +52,18 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
+    /// Create a builder for a given URL.
+    pub fn for_url(url: &str) -> Result<ClientBuilder> {
+        let url = url
+            .parse()
+            .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
+        Ok(ClientBuilder {
+            url,
+            headers: HeaderMap::new(),
+            reconnect_opts: ReconnectOptions::default(),
+        })
+    }
+
     /// Set a HTTP header on the SSE request.
     pub fn header(mut self, name: &str, value: &str) -> Result<ClientBuilder> {
         let name =
@@ -125,17 +137,6 @@ struct RequestProps {
 struct ClientImpl<C> {
     http: hyper::Client<C>,
     request_props: RequestProps,
-}
-
-pub fn for_url(url: &str) -> Result<ClientBuilder> {
-    let url = url
-        .parse()
-        .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
-    Ok(ClientBuilder {
-        url,
-        headers: HeaderMap::new(),
-        reconnect_opts: ReconnectOptions::default(),
-    })
 }
 
 impl<C> Client for ClientImpl<C>
