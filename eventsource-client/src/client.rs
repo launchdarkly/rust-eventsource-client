@@ -33,7 +33,7 @@ pub type HttpsConnector = RustlsConnector<HttpConnector>;
 
 /* Copied from futures::stream::BoxStream, but modified to require additional Sync bound
 so it can be shared between threads. */
-pub type BoxStream<'a, T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync + 'a>>;
+pub type BoxStream<T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync>>;
 
 /// This trait is sealed and cannot be implemented for types outside this crate.
 pub trait Client: Send + Sync + private::Sealed {

@@ -37,7 +37,7 @@ async fn main() -> Result<(), es::Error> {
     Ok(())
 }
 
-fn tail_events(stream: BoxStream<es::Result<Event>>) -> impl Stream<Item = Result<(), ()>> + '_ {
+fn tail_events(stream: BoxStream<es::Result<Event>>) -> impl Stream<Item = Result<(), ()>> {
     stream
         .map_ok(|event| {
             println!(
