@@ -1,6 +1,6 @@
-use std::{env, process, str::from_utf8, time::Duration};
-
+use es::Client;
 use futures::{Stream, TryStreamExt};
+use std::{env, process, str::from_utf8, time::Duration};
 
 use eventsource_client as es;
 
@@ -18,7 +18,7 @@ async fn main() -> Result<(), es::Error> {
     let url = &args[1];
     let auth_header = &args[2];
 
-    let client = es::Client::for_url(url)?
+    let client = es::ClientBuilder::for_url(url)?
         .header("Authorization", auth_header)?
         .reconnect(
             es::ReconnectOptions::reconnect(true)
@@ -30,13 +30,14 @@ async fn main() -> Result<(), es::Error> {
         )
         .build();
 
-    let mut stream = Box::pin(tail_events(client));
+    let mut stream = tail_events(client);
+
     while let Ok(Some(_)) = stream.try_next().await {}
 
     Ok(())
 }
 
-fn tail_events(client: es::Client<es::HttpsConnector>) -> impl Stream<Item = Result<(), ()>> {
+fn tail_events(client: impl Client) -> impl Stream<Item = Result<(), ()>> {
     client
         .stream()
         .map_ok(|event| {
