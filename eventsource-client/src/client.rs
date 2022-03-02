@@ -31,12 +31,13 @@ pub use hyper::client::HttpConnector;
 #[cfg(feature = "rustls")]
 pub type HttpsConnector = RustlsConnector<HttpConnector>;
 
-/* Copied from futures::stream::BoxStream, but modified to require additional Sync bound
-so it can be shared between threads. */
+/// Represents a [`Pin`]'d [`Send`] + [`Sync`] stream, returned by [`Client`]'s stream method.
 pub type BoxStream<T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync>>;
 
+/// Client is the Server-Sent-Events interface.
 /// This trait is sealed and cannot be implemented for types outside this crate.
 pub trait Client: Send + Sync + private::Sealed {
+    /// Returns a stream of [`Event`]s.
     fn stream(&self) -> BoxStream<Result<Event>>;
 }
 
@@ -45,6 +46,7 @@ pub trait Client: Send + Sync + private::Sealed {
  * TODO specify list of stati to not retry (e.g. 204)
  */
 
+/// ClientBuilder provides a series of builder methods to easily construct a [`Client`].
 pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
@@ -85,6 +87,7 @@ impl ClientBuilder {
         self
     }
 
+    /// Build with a specific client connector.
     pub fn build_with_conn<C>(self, conn: C) -> impl Client
     where
         C: Connect + Clone + Send + Sync + 'static,
@@ -99,16 +102,19 @@ impl ClientBuilder {
         }
     }
 
+    /// Build with an HTTP client connector.
     pub fn build_http(self) -> impl Client {
         self.build_with_conn(HttpConnector::new())
     }
 
     #[cfg(feature = "rustls")]
+    /// Build with an HTTPS client connector, using the OS root certificate store.
     pub fn build(self) -> impl Client {
         let conn = HttpsConnector::with_native_roots();
         self.build_with_conn(conn)
     }
 
+    /// Build with the given [`hyper::client::Client`].
     pub fn build_with_http_client<C>(self, http: hyper::Client<C>) -> impl Client
     where
         C: Connect + Clone + Send + Sync + 'static,
