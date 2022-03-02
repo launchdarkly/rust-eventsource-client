@@ -1,6 +1,6 @@
 use futures::{ready, Stream};
 use hyper::{
-    body::{Bytes, HttpBody},
+    body::HttpBody,
     client::{
         connect::{Connect, Connection},
         ResponseFuture,
@@ -29,13 +29,15 @@ use tokio::{
     time::Sleep,
 };
 
-use super::config::ReconnectOptions;
-use super::error::{Error, Result};
+use crate::config::ReconnectOptions;
+use crate::error::{Error, Result};
 
 use crate::event_parser::EventParser;
-use crate::SSE;
+use crate::event_parser::SSE;
 pub use hyper::client::HttpConnector;
 use hyper_timeout::TimeoutConnector;
+
+use std::error::Error as StdError;
 
 #[cfg(feature = "rustls")]
 pub type HttpsConnector = RustlsConnector<HttpConnector>;
@@ -49,7 +51,7 @@ pub type BoxStream<T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync>>;
 /// This trait is sealed and cannot be implemented for types outside this crate.
 pub trait Client: Send + Sync + private::Sealed {
     /// Returns a stream of [`Event`]s.
-    fn stream(&self) -> BoxStream<Result<Event>>;
+    fn stream(&self) -> BoxStream<Result<SSE>>;
 }
 
 /*

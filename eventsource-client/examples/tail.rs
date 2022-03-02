@@ -3,6 +3,7 @@ use futures::{Stream, TryStreamExt};
 use std::{env, process, str::from_utf8, time::Duration};
 
 use eventsource_client as es;
+use eventsource_client::SSE;
 
 #[tokio::main]
 async fn main() -> Result<(), es::Error> {
@@ -40,12 +41,20 @@ async fn main() -> Result<(), es::Error> {
 fn tail_events(client: impl Client) -> impl Stream<Item = Result<(), ()>> {
     client
         .stream()
-        .map_ok(|event| {
-            println!(
-                "got an event: {}\n{}",
-                event.event_type,
-                from_utf8(&event.data).unwrap_or_default()
-            )
+        .map_ok(|event| match event {
+            SSE::Event(ev) => {
+                println!(
+                    "got an event: {}\n{}",
+                    ev.event_type,
+                    from_utf8(&ev.data).unwrap_or_default()
+                )
+            }
+            SSE::Comment(comment) => {
+                println!(
+                    "got a comment: \n{}",
+                    from_utf8(&comment).unwrap_or_default()
+                )
+            }
         })
         .map_err(|err| eprintln!("error streaming events: {:?}", err))
 }

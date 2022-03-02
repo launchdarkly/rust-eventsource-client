@@ -3,7 +3,7 @@
 //! ```
 //! use futures::{TryStreamExt};
 //! # use eventsource_client::Error;
-//! use eventsource_client::Client;
+//! use eventsource_client::{Client, SSE};
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), eventsource_client::Error> {
 //! let mut client = eventsource_client::ClientBuilder::for_url("https://example.com/stream")?
