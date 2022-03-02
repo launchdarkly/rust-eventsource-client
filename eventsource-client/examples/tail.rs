@@ -1,4 +1,4 @@
-use es::{BoxStream, Client, Event};
+use es::Client;
 use futures::{Stream, TryStreamExt};
 use std::{env, process, str::from_utf8, time::Duration};
 
@@ -30,15 +30,16 @@ async fn main() -> Result<(), es::Error> {
         )
         .build();
 
-    let mut stream = tail_events(client.stream());
+    let mut stream = tail_events(client);
 
     while let Ok(Some(_)) = stream.try_next().await {}
 
     Ok(())
 }
 
-fn tail_events(stream: BoxStream<es::Result<Event>>) -> impl Stream<Item = Result<(), ()>> {
-    stream
+fn tail_events(client: impl Client) -> impl Stream<Item = Result<(), ()>> {
+    client
+        .stream()
         .map_ok(|event| {
             println!(
                 "got an event: {}\n{}",
