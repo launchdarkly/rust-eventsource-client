@@ -1,3 +1,4 @@
+#![warn(rust_2018_idioms)]
 //! Client for the [Server-Sent Events] protocol (aka [EventSource]).
 //!
 //! ```

@@ -235,7 +235,7 @@ impl State {
 }
 
 impl Debug for State {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name())
     }
 }
@@ -326,7 +326,7 @@ where
         loop {
             let this = self.as_mut().project();
             if let Some(event) = this.event_parser.get_event() {
-                match event {
+                return match event {
                     SSE::Event(ref evt) => {
                         if !evt.id.is_empty() {
                             *this.last_event_id = String::from_utf8(evt.id.clone()).unwrap();
@@ -336,9 +336,9 @@ where
                             this.props.reconnect_opts.delay = Duration::from_millis(retry);
                             self.as_mut().reset_backoff();
                         }
-                        return Poll::Ready(Some(Ok(event)));
+                        Poll::Ready(Some(Ok(event)))
                     }
-                    SSE::Comment(_) => return Poll::Ready(Some(Ok(event))),
+                    SSE::Comment(_) => Poll::Ready(Some(Ok(event))),
                 };
             }
 
