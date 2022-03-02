@@ -1,8 +1,12 @@
 use futures::{ready, Stream};
 use hyper::{
     body::{Bytes, HttpBody},
-    client::{connect::Connect, ResponseFuture},
+    client::{
+        connect::{Connect, Connection},
+        ResponseFuture,
+    },
     header::{HeaderMap, HeaderName, HeaderValue},
+    service::Service,
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
@@ -19,7 +23,11 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::time::Sleep;
+
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    time::Sleep,
+};
 
 use super::config::ReconnectOptions;
 use super::decode::Decoded;
@@ -27,9 +35,12 @@ use super::error::{Error, Result};
 
 use crate::Event;
 pub use hyper::client::HttpConnector;
+use hyper_timeout::TimeoutConnector;
 
 #[cfg(feature = "rustls")]
 pub type HttpsConnector = RustlsConnector<HttpConnector>;
+
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Represents a [`Pin`]'d [`Send`] + [`Sync`] stream, returned by [`Client`]'s stream method.
 pub type BoxStream<T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync>>;
@@ -51,6 +62,7 @@ pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
+    read_timeout: Option<Duration>,
 }
 
 impl ClientBuilder {
@@ -63,6 +75,7 @@ impl ClientBuilder {
             url,
             headers: HeaderMap::new(),
             reconnect_opts: ReconnectOptions::default(),
+            read_timeout: None,
         })
     }
 
@@ -78,6 +91,12 @@ impl ClientBuilder {
         Ok(self)
     }
 
+    /// Set a read timeout for the underlying connection. There is no read timeout by default.
+    pub fn read_timeout(mut self, read_timeout: Duration) -> ClientBuilder {
+        self.read_timeout = Some(read_timeout);
+        self
+    }
+
     /// Configure the client's reconnect behaviour according to the supplied
     /// [`ReconnectOptions`].
     ///
@@ -90,10 +109,18 @@ impl ClientBuilder {
     /// Build with a specific client connector.
     pub fn build_with_conn<C>(self, conn: C) -> impl Client
     where
-        C: Connect + Clone + Send + Sync + 'static,
+        C: Service<Uri> + Clone + Send + Sync + 'static,
+        C::Response: Connection + AsyncRead + AsyncWrite + Send + Unpin,
+        C::Future: Send + 'static,
+        C::Error: Into<BoxError>,
     {
+        let mut connector = TimeoutConnector::new(conn);
+        connector.set_read_timeout(self.read_timeout);
+
+        let client = hyper::Client::builder().build::<_, hyper::Body>(connector);
+
         ClientImpl {
-            http: hyper::Client::builder().build(conn),
+            http: client,
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
