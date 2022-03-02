@@ -32,10 +32,11 @@ use tokio::{
 use crate::config::ReconnectOptions;
 use crate::error::{Error, Result};
 
-use crate::event_parser::EventParser;
-use crate::event_parser::SSE;
 pub use hyper::client::HttpConnector;
 use hyper_timeout::TimeoutConnector;
+
+use crate::event_parser::EventParser;
+use crate::event_parser::SSE;
 
 use std::error::Error as StdError;
 
@@ -50,7 +51,6 @@ pub type BoxStream<T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync>>;
 /// Client is the Server-Sent-Events interface.
 /// This trait is sealed and cannot be implemented for types outside this crate.
 pub trait Client: Send + Sync + private::Sealed {
-    /// Returns a stream of [`Event`]s.
     fn stream(&self) -> BoxStream<Result<SSE>>;
 }
 
@@ -92,6 +92,13 @@ impl ClientBuilder {
         })
     }
 
+    /// Set the last event id for a stream when it is created. If it is set, it will be sent to the
+    /// server in case it can replay missed events.
+    pub fn last_event_id(mut self, last_event_id: String) -> ClientBuilder {
+        self.last_event_id = last_event_id;
+        self
+    }
+
     /// Set a HTTP header on the SSE request.
     pub fn header(mut self, name: &str, value: &str) -> Result<ClientBuilder> {
         let name =
@@ -113,13 +120,6 @@ impl ClientBuilder {
     /// Set the request body used for the initial connection to the SSE endpoint.
     pub fn body(mut self, body: String) -> ClientBuilder {
         self.body = Some(body);
-        self
-    }
-
-    /// Set the last event id for a stream when it is created. If it is set, it will be sent to the
-    /// server in case it can replay missed events.
-    pub fn last_event_id(mut self, last_event_id: String) -> ClientBuilder {
-        self.last_event_id = last_event_id;
         self
     }
 
@@ -224,7 +224,6 @@ where
     ///
     /// After the first successful connection, the stream will
     /// reconnect for retryable errors.
-
     fn stream(&self) -> BoxStream<Result<SSE>> {
         Box::pin(ReconnectingRequest::new(
             self.http.clone(),
@@ -251,12 +250,12 @@ enum State {
 impl State {
     fn name(&self) -> &'static str {
         match self {
-            State::StreamClosed => "closed",
             State::New => "new",
             State::Connecting { retry: false, .. } => "connecting(no-retry)",
             State::Connecting { retry: true, .. } => "connecting(retry)",
             State::Connected(_) => "connected",
             State::WaitingToReconnect(_) => "waiting-to-reconnect",
+            State::StreamClosed => "closed",
         }
     }
 }
@@ -307,6 +306,7 @@ impl<C> ReconnectingRequest<C> {
         for (name, value) in &self.props.headers {
             request_builder = request_builder.header(name, value);
         }
+
         if !self.last_event_id.is_empty() {
             request_builder = request_builder.header(
                 "last-event-id",
