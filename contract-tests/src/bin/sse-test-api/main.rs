@@ -48,13 +48,10 @@ struct Config {
 }
 
 #[derive(Serialize, Debug)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 enum EventType {
-    #[serde(rename = "event")]
     Event { event: Event },
-    #[serde(rename = "comment")]
     Comment { comment: String },
-    #[serde(rename = "error")]
     Error { error: String },
 }
 

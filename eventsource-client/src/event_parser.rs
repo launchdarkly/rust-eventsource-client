@@ -455,7 +455,7 @@ mod tests {
     #[test_case(b":hello\r\n"; "with CRLF")]
     fn test_decode_chunks_comments_are_ignored(chunk: &'static [u8]) {
         let mut parser = EventParser::new();
-        assert!(parser.process_bytes(Bytes::from(&chunk[..])).is_ok());
+        assert!(parser.process_bytes(Bytes::from(chunk)).is_ok());
         assert!(parser.get_event().is_none());
     }
 
@@ -625,7 +625,8 @@ mod tests {
     }
 
     fn read_contents_from_file(name: &str) -> Vec<u8> {
-        std::fs::read(format!("test-data/{}", name)).expect(&format!("couldn't read {}", name))
+        std::fs::read(format!("test-data/{}", name))
+            .unwrap_or_else(|_| panic!("couldn't read {}", name))
     }
 
     fn event_data(event: &Event) -> std::result::Result<&str, String> {

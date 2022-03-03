@@ -75,7 +75,7 @@ impl ClientBuilder {
     pub fn for_url(url: &str) -> Result<ClientBuilder> {
         let url = url
             .parse()
-            .map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+            .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
         let mut header_map = HeaderMap::new();
         header_map.insert("Accept", HeaderValue::from_static("text/event-stream"));
@@ -101,11 +101,10 @@ impl ClientBuilder {
 
     /// Set a HTTP header on the SSE request.
     pub fn header(mut self, name: &str, value: &str) -> Result<ClientBuilder> {
-        let name =
-            HeaderName::from_str(name).map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+        let name = HeaderName::from_str(name).map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
-        let value = HeaderValue::from_str(value)
-            .map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+        let value =
+            HeaderValue::from_str(value).map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
         self.headers.insert(name, value);
         Ok(self)
@@ -261,7 +260,7 @@ impl State {
 }
 
 impl Debug for State {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name())
     }
 }
@@ -320,10 +319,9 @@ impl<C> ReconnectingRequest<C> {
             body = Body::from(props_body.to_string());
         }
 
-        // todo(cwaldren): Should this be BAD_REQUEST?
         let request = request_builder
             .body(body)
-            .map_err(|_| Error::HttpRequest(StatusCode::BAD_REQUEST))?;
+            .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
         Ok(self.http.request(request))
     }
@@ -358,7 +356,7 @@ where
         loop {
             let this = self.as_mut().project();
             if let Some(event) = this.event_parser.get_event() {
-                match event {
+                return match event {
                     SSE::Event(ref evt) => {
                         if !evt.id.is_empty() {
                             *this.last_event_id = String::from_utf8(evt.id.clone()).unwrap();
@@ -368,9 +366,9 @@ where
                             this.props.reconnect_opts.delay = Duration::from_millis(retry);
                             self.as_mut().reset_backoff();
                         }
-                        return Poll::Ready(Some(Ok(event)));
+                        Poll::Ready(Some(Ok(event)))
                     }
-                    SSE::Comment(_) => return Poll::Ready(Some(Ok(event))),
+                    SSE::Comment(_) => Poll::Ready(Some(Ok(event))),
                 };
             }
 
