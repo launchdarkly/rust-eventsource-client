@@ -40,12 +40,20 @@ async fn main() -> Result<(), es::Error> {
 fn tail_events(client: impl Client) -> impl Stream<Item = Result<(), ()>> {
     client
         .stream()
-        .map_ok(|event| {
-            println!(
-                "got an event: {}\n{}",
-                event.event_type,
-                from_utf8(event.field("data").unwrap_or_default()).unwrap_or_default()
-            )
+        .map_ok(|event| match event {
+            es::SSE::Event(ev) => {
+                println!(
+                    "got an event: {}\n{}",
+                    ev.event_type,
+                    from_utf8(&ev.data).unwrap_or_default()
+                )
+            }
+            es::SSE::Comment(comment) => {
+                println!(
+                    "got a comment: \n{}",
+                    from_utf8(&comment).unwrap_or_default()
+                )
+            }
         })
         .map_err(|err| eprintln!("error streaming events: {:?}", err))
 }
