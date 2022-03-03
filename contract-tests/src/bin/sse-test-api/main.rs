@@ -32,6 +32,19 @@ struct Config {
     /// property if the test service has the "headers" capability. Header names can be assumed
     /// to all be lowercase.
     headers: Option<HashMap<String, String>>,
+    /// An optional integer specifying the read timeout for the connection, in
+    /// milliseconds.
+    read_timeout_ms: Option<u64>,
+    /// An optional string which should be sent as the Last-Event-Id header in the initial
+    /// HTTP request. The test harness will only set this property if the test service has the
+    /// "last-event-id" capability.
+    last_event_id: Option<String>,
+    /// A string specifying an HTTP method to use instead of GET. The test harness will only
+    /// set this property if the test service has the "post" or "report" capability.
+    method: Option<String>,
+    /// A string specifying data to be sent in the HTTP request body. The test harness will
+    /// only set this property if the test service has the "post" or "report" capability.
+    body: Option<String>,
 }
 
 #[derive(Serialize, Debug)]

@@ -98,6 +98,22 @@ impl Inner {
             reconnect_options = reconnect_options.delay(Duration::from_millis(delay_ms));
         }
 
+        if let Some(read_timeout_ms) = config.read_timeout_ms {
+            client_builder = client_builder.read_timeout(Duration::from_millis(read_timeout_ms));
+        }
+
+        if let Some(last_event_id) = &config.last_event_id {
+            client_builder = client_builder.last_event_id(last_event_id.clone());
+        }
+
+        if let Some(method) = &config.method {
+            client_builder = client_builder.method(method.to_string());
+        }
+
+        if let Some(body) = &config.body {
+            client_builder = client_builder.body(body.to_string());
+        }
+
         if let Some(headers) = &config.headers {
             for (name, value) in headers {
                 client_builder = match client_builder.header(name, value) {
