@@ -75,9 +75,13 @@ impl ClientBuilder {
             .parse()
             .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
+        let mut header_map = HeaderMap::new();
+        header_map.insert("Accept", HeaderValue::from_static("text/event-stream"));
+        header_map.insert("Cache-Control", HeaderValue::from_static("no-cache"));
+
         Ok(ClientBuilder {
             url,
-            headers: HeaderMap::new(),
+            headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
             read_timeout: None,
             last_event_id: String::new(),
