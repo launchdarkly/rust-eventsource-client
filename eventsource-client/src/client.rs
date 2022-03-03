@@ -85,8 +85,8 @@ impl ClientBuilder {
             url,
             headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
-            last_event_id: String::new(),
             read_timeout: None,
+            last_event_id: String::new(),
             method: String::from("GET"),
             body: None,
         })
