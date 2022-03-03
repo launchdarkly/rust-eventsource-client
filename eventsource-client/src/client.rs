@@ -66,6 +66,8 @@ pub struct ClientBuilder {
     reconnect_opts: ReconnectOptions,
     read_timeout: Option<Duration>,
     last_event_id: String,
+    method: String,
+    body: Option<String>,
 }
 
 impl ClientBuilder {
@@ -85,7 +87,21 @@ impl ClientBuilder {
             reconnect_opts: ReconnectOptions::default(),
             read_timeout: None,
             last_event_id: String::new(),
+            method: String::from("GET"),
+            body: None,
         })
+    }
+
+    /// Set the request method used for the initial connection to the SSE endpoint.
+    pub fn method(mut self, method: String) -> ClientBuilder {
+        self.method = method;
+        self
+    }
+
+    /// Set the request body used for the initial connection to the SSE endpoint.
+    pub fn body(mut self, body: String) -> ClientBuilder {
+        self.body = Some(body);
+        self
     }
 
     /// Set the last event id for a stream when it is created. If it is set, it will be sent to the
@@ -139,6 +155,8 @@ impl ClientBuilder {
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
+                method: self.method,
+                body: self.body,
                 reconnect_opts: self.reconnect_opts,
             },
             last_event_id: self.last_event_id,
@@ -167,6 +185,8 @@ impl ClientBuilder {
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
+                method: self.method,
+                body: self.body,
                 reconnect_opts: self.reconnect_opts,
             },
             last_event_id: self.last_event_id,
@@ -178,6 +198,8 @@ impl ClientBuilder {
 struct RequestProps {
     url: Uri,
     headers: HeaderMap,
+    method: String,
+    body: Option<String>,
     reconnect_opts: ReconnectOptions,
 }
 
@@ -276,7 +298,9 @@ impl<C> ReconnectingRequest<C> {
     where
         C: Connect + Clone + Send + Sync + 'static,
     {
-        let mut request_builder = Request::builder().uri(&self.props.url);
+        let mut request_builder = Request::builder()
+            .method(self.props.method.as_str())
+            .uri(&self.props.url);
 
         for (name, value) in &self.props.headers {
             request_builder = request_builder.header(name, value);
@@ -289,7 +313,10 @@ impl<C> ReconnectingRequest<C> {
             );
         }
 
-        let body = Body::empty();
+        let body = match &self.props.body {
+            Some(body) => Body::from(body.to_string()),
+            None => Body::empty(),
+        };
 
         let request = request_builder
             .body(body)
