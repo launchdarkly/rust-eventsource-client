@@ -63,11 +63,11 @@ pub trait Client: Send + Sync + private::Sealed {
 pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
-    method: String,
-    body: Option<String>,
     reconnect_opts: ReconnectOptions,
     read_timeout: Option<Duration>,
     last_event_id: String,
+    method: String,
+    body: Option<String>,
 }
 
 impl ClientBuilder {
@@ -83,13 +83,25 @@ impl ClientBuilder {
 
         Ok(ClientBuilder {
             url,
-            method: String::from("GET"),
             headers: header_map,
-            body: None,
             reconnect_opts: ReconnectOptions::default(),
             last_event_id: String::new(),
             read_timeout: None,
+            method: String::from("GET"),
+            body: None,
         })
+    }
+
+    /// Set the request method used for the initial connection to the SSE endpoint.
+    pub fn method(mut self, method: String) -> ClientBuilder {
+        self.method = method;
+        self
+    }
+
+    /// Set the request body used for the initial connection to the SSE endpoint.
+    pub fn body(mut self, body: String) -> ClientBuilder {
+        self.body = Some(body);
+        self
     }
 
     /// Set the last event id for a stream when it is created. If it is set, it will be sent to the
@@ -108,18 +120,6 @@ impl ClientBuilder {
 
         self.headers.insert(name, value);
         Ok(self)
-    }
-
-    /// Set the request method used for the initial connection to the SSE endpoint.
-    pub fn method(mut self, method: String) -> ClientBuilder {
-        self.method = method;
-        self
-    }
-
-    /// Set the request body used for the initial connection to the SSE endpoint.
-    pub fn body(mut self, body: String) -> ClientBuilder {
-        self.body = Some(body);
-        self
     }
 
     /// Set a read timeout for the underlying connection. There is no read timeout by default.
@@ -155,9 +155,9 @@ impl ClientBuilder {
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
-                reconnect_opts: self.reconnect_opts,
                 method: self.method,
                 body: self.body,
+                reconnect_opts: self.reconnect_opts,
             },
             last_event_id: self.last_event_id,
         }
@@ -313,11 +313,10 @@ impl<C> ReconnectingRequest<C> {
             );
         }
 
-        let mut body = Body::empty();
-
-        if let Some(props_body) = &self.props.body {
-            body = Body::from(props_body.to_string());
-        }
+        let body = match &self.props.body {
+            Some(body) => Body::from(body.to_string()),
+            None => Body::empty(),
+        };
 
         let request = request_builder
             .body(body)
