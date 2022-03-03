@@ -5,6 +5,8 @@ use hyper::StatusCode;
 pub enum Error {
     TimedOut,
     StreamClosed,
+    /// An invalid request parameter
+    InvalidParameter(Box<dyn std::error::Error + Send + 'static>),
     /// The HTTP request failed.
     HttpRequest(StatusCode),
     /// An error reading from the HTTP response body.
