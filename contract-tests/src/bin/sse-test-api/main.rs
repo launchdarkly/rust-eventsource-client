@@ -26,6 +26,12 @@ struct Config {
     /// test harness will send a value anyway in an attempt to avoid having reconnection tests
     /// run unnecessarily slowly.
     initial_delay_ms: Option<u64>,
+    /// A JSON object containing additional HTTP header names and string values. The SSE
+    /// client should be configured to add these headers to its HTTP requests; the test harness
+    /// will then verify that it receives those headers. The test harness will only set this
+    /// property if the test service has the "headers" capability. Header names can be assumed
+    /// to all be lowercase.
+    headers: Option<HashMap<String, String>>,
     /// An optional integer specifying the read timeout for the connection, in
     /// milliseconds.
     read_timeout_ms: Option<u64>,
@@ -33,12 +39,6 @@ struct Config {
     /// HTTP request. The test harness will only set this property if the test service has the
     /// "last-event-id" capability.
     last_event_id: Option<String>,
-    /// A JSON object containing additional HTTP header names and string values. The SSE
-    /// client should be configured to add these headers to its HTTP requests; the test harness
-    /// will then verify that it receives those headers. The test harness will only set this
-    /// property if the test service has the "headers" capability. Header names can be assumed
-    /// to all be lowercase.
-    headers: Option<HashMap<String, String>>,
     /// A string specifying an HTTP method to use instead of GET. The test harness will only
     /// set this property if the test service has the "post" or "report" capability.
     method: Option<String>,
@@ -112,10 +112,6 @@ async fn stream(
         Err(_) => return HttpResponse::InternalServerError().body("Unable to retrieve handles"),
     };
 
-    *counter += 1;
-    stream_entity.start();
-    entities.insert(*counter, stream_entity);
-
     let stream_resource = match req.url_for("stop_stream", &[counter.to_string()]) {
         Ok(sr) => sr,
         Err(_) => {
@@ -123,6 +119,10 @@ async fn stream(
                 .body("Unable to generate stream response URL")
         }
     };
+
+    *counter += 1;
+    stream_entity.start();
+    entities.insert(*counter, stream_entity);
 
     let mut response = HttpResponse::Ok();
     response.insert_header(("Location", stream_resource.to_string()));
