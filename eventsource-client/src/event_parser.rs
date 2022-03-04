@@ -442,7 +442,6 @@ mod tests {
         })
     }
 
-    #[allow(dead_code)]
     fn event_with_id(typ: &str, data: &str, id: &str) -> SSE {
         SSE::Event(Event {
             data: data.to_string(),
