@@ -358,8 +358,7 @@ where
                 return match event {
                     SSE::Event(ref evt) => {
                         if evt.id.is_some() {
-                            *this.last_event_id =
-                                String::from_utf8(evt.id.as_ref().unwrap().clone()).ok();
+                            *this.last_event_id = evt.id.clone();
                         }
 
                         if let Some(retry) = evt.retry {

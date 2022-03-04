@@ -61,13 +61,11 @@ impl From<es::SSE> for EventType {
             es::SSE::Event(evt) => Self::Event {
                 event: Event {
                     event_type: evt.event_type,
-                    data: String::from_utf8(evt.data.to_vec()).unwrap(),
-                    id: evt.id.map(|id| String::from_utf8(id).unwrap()),
+                    data: evt.data,
+                    id: evt.id,
                 },
             },
-            es::SSE::Comment(comment) => Self::Comment {
-                comment: String::from_utf8(comment).unwrap(),
-            },
+            es::SSE::Comment(comment) => Self::Comment { comment },
         }
     }
 }
