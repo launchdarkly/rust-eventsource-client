@@ -1,6 +1,5 @@
 TEMP_TEST_OUTPUT=/tmp/contract-test-service.log
-SKIPFLAGS = -skip 'reconnection' -skip 'basic parsing/ID field is ignored if it contains a null' -skip 'basic parsing/last ID persists if not overridden by later event' \
--skip 'HTTP behavior/client follows 301 redirect' -skip 'HTTP behavior/client follows 307 redirect'
+SKIPFLAGS = -skip 'reconnection' -skip 'HTTP behavior/client follows 301 redirect' -skip 'HTTP behavior/client follows 307 redirect'
 
 
 build-contract-tests:

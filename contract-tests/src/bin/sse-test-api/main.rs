@@ -62,7 +62,7 @@ impl From<es::SSE> for EventType {
                 event: Event {
                     event_type: evt.event_type,
                     data: String::from_utf8(evt.data.to_vec()).unwrap(),
-                    id: String::from_utf8(evt.id.to_vec()).unwrap(),
+                    id: evt.id.map(|id| String::from_utf8(id).unwrap()),
                 },
             },
             es::SSE::Comment(comment) => Self::Comment {
@@ -77,7 +77,7 @@ struct Event {
     #[serde(rename = "type")]
     event_type: String,
     data: String,
-    id: String,
+    id: Option<String>,
 }
 
 async fn status() -> impl Responder {

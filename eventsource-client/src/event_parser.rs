@@ -10,7 +10,7 @@ use super::error::{Error, Result};
 struct EventData {
     pub event_type: String,
     pub data: Vec<u8>,
-    pub id: Vec<u8>,
+    pub id: Option<Vec<u8>>,
     pub retry: Option<u64>,
     pub comment: Vec<u8>,
 }
@@ -25,10 +25,9 @@ impl EventData {
         self.data.push(b'\n');
     }
 
-    pub fn set_id(&mut self, value: &[u8]) {
-        // TODO(mmk) If value has a null code point, ignore this assignment
-        // https://github.com/whatwg/html/issues/689
-        self.id = value.to_vec();
+    pub fn with_id(mut self, value: Option<Vec<u8>>) -> Self {
+        self.id = value;
+        self
     }
 }
 
@@ -77,21 +76,8 @@ impl TryFrom<EventData> for Option<SSE> {
 pub struct Event {
     pub event_type: String,
     pub data: Vec<u8>,
-    pub id: Vec<u8>,
+    pub id: Option<Vec<u8>>,
     pub retry: Option<u64>,
-}
-
-impl Event {
-    pub fn append_data(&mut self, value: &[u8]) {
-        self.data.extend(value.to_vec());
-        self.data.push(b'\n');
-    }
-
-    pub fn set_id(&mut self, value: &[u8]) {
-        // TODO(mmk) If value has a null code point, ignore this assignment
-        // https://github.com/whatwg/html/issues/689
-        self.id = value.to_vec();
-    }
 }
 
 const LOGIFY_MAX_CHARS: usize = 100;
@@ -153,7 +139,8 @@ pub struct EventParser {
     last_char_was_cr: bool,
     /// the event data currently being decoded
     event_data: Option<EventData>,
-
+    /// the last-seen event ID; events without an ID will take on this value until it is updated.
+    last_event_id: Option<Vec<u8>>,
     sse: VecDeque<SSE>,
 }
 
@@ -164,6 +151,7 @@ impl EventParser {
             incomplete_line: None,
             last_char_was_cr: false,
             event_data: None,
+            last_event_id: None,
             sse: VecDeque::with_capacity(3),
         }
     }
@@ -216,7 +204,11 @@ impl EventParser {
                 }
 
                 if let Some((key, value)) = parse_field(&line)? {
-                    let event_data = self.event_data.get_or_insert_with(EventData::new);
+                    let id = &self.last_event_id;
+                    let event_data = self
+                        .event_data
+                        .get_or_insert_with(|| EventData::new().with_id(id.clone()));
+
                     if key == "comment" {
                         event_data.comment = value.to_vec();
                     } else if key == "event" {
@@ -226,7 +218,10 @@ impl EventParser {
                     } else if key == "data" {
                         event_data.append_data(value);
                     } else if key == "id" {
-                        event_data.set_id(value);
+                        if !value.contains(&b'\0') {
+                            self.last_event_id = Some(value.to_vec());
+                            event_data.id = self.last_event_id.clone()
+                        };
                     } else if key == "retry" {
                         match from_utf8(value).unwrap_or("").parse::<u64>() {
                             Ok(retry) => event_data.retry = Some(retry),
@@ -408,10 +403,20 @@ mod tests {
         assert_eq!(parse_field(b"\xe2\x98\x83: foo"), field("☃", b"foo"));
     }
 
-    fn event(typ: &str, data: &[u8], id: &[u8]) -> SSE {
+    fn event(typ: &str, data: &[u8]) -> SSE {
         SSE::Event(Event {
             data: data.to_vec(),
-            id: id.to_vec(),
+            id: None,
+            event_type: typ.to_string(),
+            retry: None,
+        })
+    }
+
+    #[allow(dead_code)]
+    fn event_with_id(typ: &str, data: &[u8], id: Option<&[u8]>) -> SSE {
+        SSE::Event(Event {
+            data: data.to_vec(),
+            id: id.map(|id| id.to_vec()),
             event_type: typ.to_string(),
             retry: None,
         })
@@ -424,25 +429,60 @@ mod tests {
         assert!(parser.get_event().is_none());
     }
 
+    #[test]
+    fn test_ignore_id_containing_null() {
+        let mut parser = EventParser::new();
+        assert!(parser
+            .process_bytes(Bytes::from("event: add\ndata: abc\n\n"))
+            .is_ok());
+        assert!(parser.process_bytes(Bytes::from("id: a\x00bc")).is_ok());
+
+        if let Some(SSE::Event(event)) = parser.get_event() {
+            assert!(event.id.is_none());
+        } else {
+            panic!("Event should have been received");
+        }
+    }
+
+    fn require_pop_event<F>(parser: &mut EventParser, f: F)
+    where
+        F: FnOnce(Event),
+    {
+        if let Some(SSE::Event(event)) = parser.get_event() {
+            f(event)
+        } else {
+            panic!("Event should have been received")
+        }
+    }
+
+    #[test_case("persistent-event-id.sse"; "persistent-event-id.sse")]
+    fn test_last_id_persists_if_not_overridden(file: &str) {
+        let contents = read_contents_from_file(file);
+        let mut parser = EventParser::new();
+        assert!(parser.process_bytes(Bytes::from(contents)).is_ok());
+
+        require_pop_event(&mut parser, |e| assert_eq!(e.id, Some("1".into())));
+        require_pop_event(&mut parser, |e| assert_eq!(e.id, Some("1".into())));
+        require_pop_event(&mut parser, |e| assert_eq!(e.id, Some("3".into())));
+        require_pop_event(&mut parser, |e| assert_eq!(e.id, Some("3".into())));
+    }
+
     #[test_case("event: add\ndata: hello\n\n", "add".into())]
     #[test_case("data: hello\n\n", "message".into())]
     fn test_event_can_parse_type_correctly(chunk: &'static str, event_type: String) {
         let mut parser = EventParser::new();
 
         assert!(parser.process_bytes(Bytes::from(chunk)).is_ok());
-        if let Some(SSE::Event(event)) = parser.get_event() {
-            assert_eq!(event_type, event.event_type);
-        } else {
-            panic!("Event should have been received")
-        }
+
+        require_pop_event(&mut parser, |e| assert_eq!(event_type, e.event_type));
     }
 
-    #[test_case("data: hello\n\n", event("message", &b"hello"[..], &b""[..]); "parses event body with LF")]
-    #[test_case("data: hello\n\r", event("message", &b"hello"[..], &b""[..]); "parses event body with LF and trailing CR")]
-    #[test_case("data: hello\r\n\n", event("message", &b"hello"[..], &b""[..]); "parses event body with CRLF")]
-    #[test_case("data: hello\r\n\r", event("message", &b"hello"[..], &b""[..]); "parses event body with CRLF and trailing CR")]
-    #[test_case("data: hello\r\r", event("message", &b"hello"[..], &b""[..]); "parses event body with CR")]
-    #[test_case("data: hello\r\r\n", event("message", &b"hello"[..], &b""[..]); "parses event body with CR and trailing CRLF")]
+    #[test_case("data: hello\n\n", event("message", &b"hello"[..]); "parses event body with LF")]
+    #[test_case("data: hello\n\r", event("message", &b"hello"[..]); "parses event body with LF and trailing CR")]
+    #[test_case("data: hello\r\n\n", event("message", &b"hello"[..]); "parses event body with CRLF")]
+    #[test_case("data: hello\r\n\r", event("message", &b"hello"[..]); "parses event body with CRLF and trailing CR")]
+    #[test_case("data: hello\r\r", event("message", &b"hello"[..]); "parses event body with CR")]
+    #[test_case("data: hello\r\r\n", event("message", &b"hello"[..]); "parses event body with CR and trailing CRLF")]
     fn test_decode_chunks_simple(chunk: &'static str, event: SSE) {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(chunk)).is_ok());
@@ -459,8 +499,8 @@ mod tests {
         assert!(parser.get_event().is_none());
     }
 
-    #[test_case(&["data:", "hello\n\n"], event("message", &b"hello"[..], &b""[..]); "data split")]
-    #[test_case(&["data:hell", "o\n\n"], event("message", &b"hello"[..], &b""[..]); "data truncated")]
+    #[test_case(&["data:", "hello\n\n"], event("message", &b"hello"[..]); "data split")]
+    #[test_case(&["data:hell", "o\n\n"], event("message", &b"hello"[..]); "data truncated")]
     fn test_decode_message_split_across_chunks(chunks: &[&'static str], event: SSE) {
         let mut parser = EventParser::new();
 
@@ -478,9 +518,9 @@ mod tests {
         }
     }
 
-    #[test_case(&["data:hell", "o\n\ndata:", "world\n\n"], &[event("message", &b"hello"[..], &b""[..]), event("message", &b"world"[..], &b""[..])]; "with lf")]
-    #[test_case(&["data:hell", "o\r\rdata:", "world\r\r"], &[event("message", &b"hello"[..], &b""[..]), event("message", &b"world"[..], &b""[..])]; "with cr")]
-    #[test_case(&["data:hell", "o\r\n\ndata:", "world\r\n\n"], &[event("message", &b"hello"[..], &b""[..]), event("message", &b"world"[..], &b""[..])]; "with crlf")]
+    #[test_case(&["data:hell", "o\n\ndata:", "world\n\n"], &[event("message", &b"hello"[..]), event("message", &b"world"[..])]; "with lf")]
+    #[test_case(&["data:hell", "o\r\rdata:", "world\r\r"], &[event("message", &b"hello"[..]), event("message", &b"world"[..])]; "with cr")]
+    #[test_case(&["data:hell", "o\r\n\ndata:", "world\r\n\n"], &[event("message", &b"hello"[..]), event("message", &b"world"[..])]; "with crlf")]
     fn test_decode_multiple_messages_split_across_chunks(chunks: &[&'static str], events: &[SSE]) {
         let mut parser = EventParser::new();
 
@@ -501,10 +541,7 @@ mod tests {
         assert!(parser.process_bytes(Bytes::from("data:foo")).is_ok());
         assert!(parser.process_bytes(Bytes::from("")).is_ok());
         assert!(parser.process_bytes(Bytes::from("baz\n\n")).is_ok());
-        assert_eq!(
-            parser.get_event(),
-            Some(event("message", &b"foobaz"[..], &b""[..]))
-        );
+        assert_eq!(parser.get_event(), Some(event("message", &b"foobaz"[..])));
         assert!(parser.get_event().is_none());
 
         assert!(parser.process_bytes(Bytes::from("data:foo")).is_ok());
@@ -512,7 +549,7 @@ mod tests {
         assert!(parser.process_bytes(Bytes::from("baz\n\n")).is_ok());
         assert_eq!(
             parser.get_event(),
-            Some(event("message", &b"foobarbaz"[..], &b""[..]))
+            Some(event("message", &b"foobarbaz"[..]))
         );
         assert!(parser.get_event().is_none());
     }
@@ -524,7 +561,7 @@ mod tests {
         assert!(parser.process_bytes(Bytes::from("data:world\n\n")).is_ok());
         assert_eq!(
             parser.get_event(),
-            Some(event("message", &b"hello\nworld"[..], &b""[..]))
+            Some(event("message", &b"hello\nworld"[..]))
         );
         assert!(parser.get_event().is_none());
     }
@@ -548,14 +585,8 @@ mod tests {
             .process_bytes(Bytes::from("data: abc\n\n\ndata: def\n\n"))
             .is_ok());
 
-        assert_eq!(
-            parser.get_event(),
-            Some(event("message", &b"abc"[..], &b""[..]))
-        );
-        assert_eq!(
-            parser.get_event(),
-            Some(event("message", &b"def"[..], &b""[..]))
-        );
+        assert_eq!(parser.get_event(), Some(event("message", &b"abc"[..])));
+        assert_eq!(parser.get_event(), Some(event("message", &b"def"[..])));
         assert!(parser.get_event().is_none());
     }
 
@@ -566,13 +597,11 @@ mod tests {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(contents)).is_ok());
 
-        if let Some(SSE::Event(event)) = parser.get_event() {
-            assert_eq!(event.event_type, "patch");
-            let data = event_data(&event).expect("event data should parse");
+        require_pop_event(&mut parser, |e| {
+            assert_eq!(e.event_type, "patch");
+            let data = event_data(&e).expect("event data should parse");
             assert!(data.contains(r#"path":"/flags/goals.02.featureWithGoals"#));
-        } else {
-            panic!("Should have returned an event");
-        }
+        });
     }
 
     #[test_case("two-events.sse"; "two-events.sse")]
@@ -582,21 +611,17 @@ mod tests {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(contents)).is_ok());
 
-        if let Some(SSE::Event(event)) = parser.get_event() {
-            assert_eq!(event.event_type, "one");
-            let data = event_data(&event).expect("event data should parse");
+        require_pop_event(&mut parser, |e| {
+            assert_eq!(e.event_type, "one");
+            let data = event_data(&e).expect("event data should parse");
             assert_eq!(data, "One");
-        } else {
-            panic!("Should have returned an event");
-        }
+        });
 
-        if let Some(SSE::Event(event)) = parser.get_event() {
-            assert_eq!(event.event_type, "two");
-            let data = event_data(&event).expect("event data should parse");
+        require_pop_event(&mut parser, |e| {
+            assert_eq!(e.event_type, "two");
+            let data = event_data(&e).expect("event data should parse");
             assert_eq!(data, "Two");
-        } else {
-            panic!("Should have returned an event");
-        }
+        });
     }
 
     #[test_case("big-event-followed-by-another.sse"; "big-event-followed-by-another.sse")]
@@ -606,22 +631,18 @@ mod tests {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(contents)).is_ok());
 
-        if let Some(SSE::Event(event)) = parser.get_event() {
-            assert_eq!(event.event_type, "patch");
-            let data = event_data(&event).expect("event data should parse");
+        require_pop_event(&mut parser, |e| {
+            assert_eq!(e.event_type, "patch");
+            let data = event_data(&e).expect("event data should parse");
             assert!(data.len() > 10_000);
             assert!(data.contains(r#"path":"/flags/big.00.bigFeatureKey"#));
-        } else {
-            panic!("Should have returned an event");
-        }
+        });
 
-        if let Some(SSE::Event(event)) = parser.get_event() {
-            assert_eq!(event.event_type, "patch");
-            let data = event_data(&event).expect("event data should parse");
+        require_pop_event(&mut parser, |e| {
+            assert_eq!(e.event_type, "patch");
+            let data = event_data(&e).expect("event data should parse");
             assert!(data.contains(r#"path":"/flags/goals.02.featureWithGoals"#));
-        } else {
-            panic!("Should have returned an event");
-        }
+        });
     }
 
     fn read_contents_from_file(name: &str) -> Vec<u8> {
