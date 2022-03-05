@@ -53,19 +53,28 @@ impl TryFrom<EventData> for Option<SSE> {
             return Ok(None);
         }
 
-        let event_type = match event_data.event_type.is_empty() {
-            true => String::from("message"),
-            false => event_data.event_type.clone(),
+        let event_type = if event_data.event_type.is_empty() {
+            String::from("message")
+        } else {
+            event_data.event_type
         };
 
         let mut data = event_data.data.clone();
         data.truncate(data.len() - 1);
 
+        let id = if event_data.id.is_empty() {
+            None
+        } else {
+            Some(event_data.id.clone())
+        };
+
+        let retry = event_data.retry;
+
         Ok(Some(SSE::Event(Event {
             event_type,
             data,
-            id: (!event_data.id.is_empty()).then(|| event_data.id.clone()),
-            retry: event_data.retry,
+            id,
+            retry,
         })))
     }
 }
