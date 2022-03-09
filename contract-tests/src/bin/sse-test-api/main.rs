@@ -61,13 +61,11 @@ impl From<es::SSE> for EventType {
             es::SSE::Event(evt) => Self::Event {
                 event: Event {
                     event_type: evt.event_type,
-                    data: String::from_utf8(evt.data.to_vec()).unwrap(),
-                    id: String::from_utf8(evt.id.to_vec()).unwrap(),
+                    data: evt.data,
+                    id: evt.id,
                 },
             },
-            es::SSE::Comment(comment) => Self::Comment {
-                comment: String::from_utf8(comment).unwrap(),
-            },
+            es::SSE::Comment(comment) => Self::Comment { comment },
         }
     }
 }
@@ -77,7 +75,7 @@ struct Event {
     #[serde(rename = "type")]
     event_type: String,
     data: String,
-    id: String,
+    id: Option<String>,
 }
 
 async fn status() -> impl Responder {
@@ -86,8 +84,8 @@ async fn status() -> impl Responder {
             // "comments".to_string(),
             // "post".to_string(),
             // "report".to_string(),
-            // "headers".to_string(),
-            // "last-event-id".to_string(),
+            "headers".to_string(),
+            "last-event-id".to_string(),
         ],
     })
 }

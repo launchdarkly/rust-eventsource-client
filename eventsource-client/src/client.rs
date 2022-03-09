@@ -65,7 +65,7 @@ pub struct ClientBuilder {
     headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
     read_timeout: Option<Duration>,
-    last_event_id: String,
+    last_event_id: Option<String>,
     method: String,
     body: Option<String>,
 }
@@ -86,7 +86,7 @@ impl ClientBuilder {
             headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
             read_timeout: None,
-            last_event_id: String::new(),
+            last_event_id: None,
             method: String::from("GET"),
             body: None,
         })
@@ -107,7 +107,7 @@ impl ClientBuilder {
     /// Set the last event id for a stream when it is created. If it is set, it will be sent to the
     /// server in case it can replay missed events.
     pub fn last_event_id(mut self, last_event_id: String) -> ClientBuilder {
-        self.last_event_id = last_event_id;
+        self.last_event_id = Some(last_event_id);
         self
     }
 
@@ -209,7 +209,7 @@ struct RequestProps {
 struct ClientImpl<C> {
     http: hyper::Client<C>,
     request_props: RequestProps,
-    last_event_id: String,
+    last_event_id: Option<String>,
 }
 
 impl<C> Client for ClientImpl<C>
@@ -274,14 +274,14 @@ pub struct ReconnectingRequest<C> {
     state: State,
     next_reconnect_delay: Duration,
     event_parser: EventParser,
-    last_event_id: String,
+    last_event_id: Option<String>,
 }
 
 impl<C> ReconnectingRequest<C> {
     fn new(
         http: hyper::Client<C>,
         props: RequestProps,
-        last_event_id: String,
+        last_event_id: Option<String>,
     ) -> ReconnectingRequest<C> {
         let reconnect_delay = props.reconnect_opts.delay;
         ReconnectingRequest {
@@ -306,11 +306,11 @@ impl<C> ReconnectingRequest<C> {
             request_builder = request_builder.header(name, value);
         }
 
-        if !self.last_event_id.is_empty() {
-            request_builder = request_builder.header(
-                "last-event-id",
-                HeaderValue::from_str(&self.last_event_id.clone()).unwrap(),
-            );
+        if self.last_event_id.is_some() {
+            let id_as_header = HeaderValue::from_str(self.last_event_id.as_ref().unwrap())
+                .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
+
+            request_builder = request_builder.header("last-event-id", id_as_header);
         }
 
         let body = match &self.props.body {
@@ -357,8 +357,8 @@ where
             if let Some(event) = this.event_parser.get_event() {
                 return match event {
                     SSE::Event(ref evt) => {
-                        if !evt.id.is_empty() {
-                            *this.last_event_id = String::from_utf8(evt.id.clone()).unwrap();
+                        if evt.id.is_some() {
+                            *this.last_event_id = evt.id.clone();
                         }
 
                         if let Some(retry) = evt.retry {

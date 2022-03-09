@@ -18,8 +18,6 @@ pub enum Error {
     UnexpectedEof,
     /// Encountered a line not conforming to the SSE protocol.
     InvalidLine(String),
-    /// Encountered an event type that is not a valid UTF-8 byte sequence.
-    InvalidEventType(std::str::Utf8Error),
     InvalidEvent,
     /// An unexpected failure occurred.
     Unexpected(Box<dyn std::error::Error + Send + 'static>),

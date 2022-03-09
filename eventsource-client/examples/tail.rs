@@ -1,6 +1,6 @@
 use es::Client;
 use futures::{Stream, TryStreamExt};
-use std::{env, process, str::from_utf8, time::Duration};
+use std::{env, process, time::Duration};
 
 use eventsource_client as es;
 
@@ -42,17 +42,10 @@ fn tail_events(client: impl Client) -> impl Stream<Item = Result<(), ()>> {
         .stream()
         .map_ok(|event| match event {
             es::SSE::Event(ev) => {
-                println!(
-                    "got an event: {}\n{}",
-                    ev.event_type,
-                    from_utf8(&ev.data).unwrap_or_default()
-                )
+                println!("got an event: {}\n{}", ev.event_type, ev.data)
             }
             es::SSE::Comment(comment) => {
-                println!(
-                    "got a comment: \n{}",
-                    from_utf8(&comment).unwrap_or_default()
-                )
+                println!("got a comment: \n{}", comment)
             }
         })
         .map_err(|err| eprintln!("error streaming events: {:?}", err))
