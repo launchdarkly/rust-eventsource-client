@@ -14,17 +14,16 @@ Requires tokio.
 Example that just prints the type of each event received:
 
 ```rust
-use eventsource_client::Client;
+use eventsource_client as es;
 
-let mut client = Client::for_url("https://example.com/stream")?
+let mut client = es::ClientBuilder::for_url("https://example.com/stream")?
     .header("Authorization", "Basic username:password")?
     .build();
 
-client.stream()
-    .for_each(|event| {
-      Ok(println!("got an event: {}", event.event_type))
-    })
-    .map_err(|e| println!("error streaming events: {:?}", e));
+client
+    .stream()
+    .map_ok(|event| println!("got event: {:?}", event))
+    .map_err(|err| eprintln!("error streaming events: {:?}", err));
 ```
 
 (Some boilerplate omitted for clarity; see [examples directory] for complete,
