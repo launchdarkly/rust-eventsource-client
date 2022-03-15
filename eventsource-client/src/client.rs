@@ -306,11 +306,13 @@ impl<C> ReconnectingRequest<C> {
             request_builder = request_builder.header(name, value);
         }
 
-        if self.last_event_id.is_some() {
-            let id_as_header = HeaderValue::from_str(self.last_event_id.as_ref().unwrap())
-                .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
+        if let Some(id) = self.last_event_id.as_ref() {
+            if !id.is_empty() {
+                let id_as_header =
+                    HeaderValue::from_str(id).map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
-            request_builder = request_builder.header("last-event-id", id_as_header);
+                request_builder = request_builder.header("last-event-id", id_as_header);
+            }
         }
 
         let body = match &self.props.body {
@@ -357,9 +359,7 @@ where
             if let Some(event) = this.event_parser.get_event() {
                 return match event {
                     SSE::Event(ref evt) => {
-                        if evt.id.is_some() {
-                            *this.last_event_id = evt.id.clone();
-                        }
+                        *this.last_event_id = evt.id.clone();
 
                         if let Some(retry) = evt.retry {
                             this.props.reconnect_opts.delay = Duration::from_millis(retry);

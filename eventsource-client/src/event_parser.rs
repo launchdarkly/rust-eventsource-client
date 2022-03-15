@@ -11,7 +11,7 @@ struct EventData {
     pub event_type: String,
     pub data: String,
     pub comment: Option<String>,
-    pub id: String,
+    pub id: Option<String>,
     pub retry: Option<u64>,
 }
 
@@ -25,7 +25,7 @@ impl EventData {
         self.data.push('\n');
     }
 
-    pub fn with_id(mut self, value: String) -> Self {
+    pub fn with_id(mut self, value: Option<String>) -> Self {
         self.id = value;
         self
     }
@@ -62,11 +62,7 @@ impl TryFrom<EventData> for Option<SSE> {
         let mut data = event_data.data.clone();
         data.truncate(data.len() - 1);
 
-        let id = if event_data.id.is_empty() {
-            None
-        } else {
-            Some(event_data.id.clone())
-        };
+        let id = event_data.id.clone();
 
         let retry = event_data.retry;
 
@@ -151,7 +147,7 @@ pub struct EventParser {
     /// the event data currently being decoded
     event_data: Option<EventData>,
     /// the last-seen event ID; events without an ID will take on this value until it is updated.
-    last_event_id: String,
+    last_event_id: Option<String>,
     sse: VecDeque<SSE>,
 }
 
@@ -162,7 +158,7 @@ impl EventParser {
             incomplete_line: None,
             last_char_was_cr: false,
             event_data: None,
-            last_event_id: String::new(),
+            last_event_id: None,
             sse: VecDeque::with_capacity(3),
         }
     }
@@ -234,8 +230,13 @@ impl EventParser {
                             continue;
                         }
 
-                        self.last_event_id = value.to_string();
-                        event_data.id = self.last_event_id.clone();
+                        if value.is_empty() {
+                            self.last_event_id = Some("".to_string());
+                        } else {
+                            self.last_event_id = Some(value.to_string());
+                        }
+
+                        event_data.id = self.last_event_id.clone()
                     } else if key == "retry" {
                         match value.parse::<u64>() {
                             Ok(retry) => {
