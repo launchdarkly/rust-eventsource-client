@@ -1,4 +1,3 @@
-use es::Client;
 use futures::{Stream, TryStreamExt};
 use std::{env, process, time::Duration};
 
@@ -37,7 +36,7 @@ async fn main() -> Result<(), es::Error> {
     Ok(())
 }
 
-fn tail_events(client: impl Client) -> impl Stream<Item = Result<(), ()>> {
+fn tail_events(client: impl es::Client) -> impl Stream<Item = Result<(), ()>> {
     client
         .stream()
         .map_ok(|event| match event {
