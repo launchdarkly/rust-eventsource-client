@@ -1,6 +1,4 @@
 TEMP_TEST_OUTPUT=/tmp/contract-test-service.log
-SKIPFLAGS = -skip 'HTTP behavior/client follows 301 redirect' -skip 'HTTP behavior/client follows 307 redirect'
-
 
 build-contract-tests:
 	@cargo build
