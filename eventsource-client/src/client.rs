@@ -145,8 +145,8 @@ impl ClientBuilder {
     }
 
     /// Customize the client's following behavior when served a redirect.
-    /// It is not possible to specify unlimited redirects: `None` informs the client that
-    /// [`DEFAULT_REDIRECT_LIMIT`] should be used.
+    /// It is not possible to specify unlimited redirects using `None`;
+    /// this instead informs the client that [`DEFAULT_REDIRECT_LIMIT`] should be used.
     /// To disable redirect following, pass `Some(0)`.
     pub fn redirect_limit(mut self, limit: Option<u32>) -> ClientBuilder {
         self.max_redirects = limit.unwrap_or(DEFAULT_REDIRECT_LIMIT);
@@ -490,35 +490,16 @@ where
                             .set(State::WaitingToReconnect(delay(duration, "retrying")))
                     }
                 },
-                StateProj::FollowingRedirect(maybe_header) => {
-                    let uri: Result<Uri> = {
-                        let header = maybe_header.as_ref().ok_or_else(|| {
-                            Error::MalformedLocationHeader(Box::new(std::io::Error::new(
-                                ErrorKind::NotFound,
-                                "missing Location header",
-                            )))
-                        })?;
-
-                        let header = header
-                            .to_str()
-                            .map_err(|e| Error::MalformedLocationHeader(Box::new(e)))?;
-
-                        header
-                            .parse::<Uri>()
-                            .map_err(|e| Error::MalformedLocationHeader(Box::new(e)))
-                    };
-
-                    match uri {
-                        Ok(destination) => {
-                            *self.as_mut().project().current_url = destination;
-                            self.as_mut().project().state.set(State::New);
-                        }
-                        Err(e) => {
-                            self.as_mut().project().state.set(State::StreamClosed);
-                            return Poll::Ready(Some(Err(e)));
-                        }
+                StateProj::FollowingRedirect(maybe_header) => match uri_from_header(maybe_header) {
+                    Ok(uri) => {
+                        *self.as_mut().project().current_url = uri;
+                        self.as_mut().project().state.set(State::New);
                     }
-                }
+                    Err(e) => {
+                        self.as_mut().project().state.set(State::StreamClosed);
+                        return Poll::Ready(Some(Err(e)));
+                    }
+                },
                 StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
                     Some(Ok(result)) => {
                         this.event_parser.process_bytes(result)?;
@@ -564,6 +545,23 @@ where
             };
         }
     }
+}
+
+fn uri_from_header(maybe_header: &Option<HeaderValue>) -> Result<Uri> {
+    let header = maybe_header.as_ref().ok_or_else(|| {
+        Error::MalformedLocationHeader(Box::new(std::io::Error::new(
+            ErrorKind::NotFound,
+            "missing Location header",
+        )))
+    })?;
+
+    let header_string = header
+        .to_str()
+        .map_err(|e| Error::MalformedLocationHeader(Box::new(e)))?;
+
+    header_string
+        .parse::<Uri>()
+        .map_err(|e| Error::MalformedLocationHeader(Box::new(e)))
 }
 
 fn delay(dur: Duration, description: &str) -> Sleep {
