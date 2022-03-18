@@ -73,7 +73,7 @@ pub struct ClientBuilder {
     last_event_id: Option<String>,
     method: String,
     body: Option<String>,
-    max_redirects: u32,
+    max_redirects: Option<u32>,
 }
 
 impl ClientBuilder {
@@ -94,7 +94,7 @@ impl ClientBuilder {
             read_timeout: None,
             last_event_id: None,
             method: String::from("GET"),
-            max_redirects: DEFAULT_REDIRECT_LIMIT,
+            max_redirects: None,
             body: None,
         })
     }
@@ -145,11 +145,10 @@ impl ClientBuilder {
     }
 
     /// Customize the client's following behavior when served a redirect.
-    /// It is not possible to specify unlimited redirects using `None`;
-    /// this instead informs the client that [`DEFAULT_REDIRECT_LIMIT`] should be used.
-    /// To disable redirect following, pass `Some(0)`.
-    pub fn redirect_limit(mut self, limit: Option<u32>) -> ClientBuilder {
-        self.max_redirects = limit.unwrap_or(DEFAULT_REDIRECT_LIMIT);
+    /// To disable following redirects, pass `0`.
+    /// By default, the limit is [`DEFAULT_REDIRECT_LIMIT`].
+    pub fn redirect_limit(mut self, limit: u32) -> ClientBuilder {
+        self.max_redirects = Some(limit);
         self
     }
 
@@ -174,7 +173,7 @@ impl ClientBuilder {
                 method: self.method,
                 body: self.body,
                 reconnect_opts: self.reconnect_opts,
-                max_redirects: self.max_redirects,
+                max_redirects: self.max_redirects.unwrap_or(DEFAULT_REDIRECT_LIMIT),
             },
             last_event_id: self.last_event_id,
         }
@@ -205,7 +204,7 @@ impl ClientBuilder {
                 method: self.method,
                 body: self.body,
                 reconnect_opts: self.reconnect_opts,
-                max_redirects: self.max_redirects,
+                max_redirects: self.max_redirects.unwrap_or(DEFAULT_REDIRECT_LIMIT),
             },
             last_event_id: self.last_event_id,
         }
