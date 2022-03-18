@@ -7,8 +7,8 @@ pub enum Error {
     StreamClosed,
     /// An invalid request parameter
     InvalidParameter(Box<dyn std::error::Error + Send + 'static>),
-    /// The HTTP request failed.
-    HttpRequest(StatusCode),
+    /// The HTTP response could not be handled.
+    UnexpectedResponse(StatusCode),
     /// An error reading from the HTTP response body.
     HttpStream(Box<dyn std::error::Error + Send + 'static>),
     /// The HTTP response stream ended
@@ -19,6 +19,10 @@ pub enum Error {
     /// Encountered a line not conforming to the SSE protocol.
     InvalidLine(String),
     InvalidEvent,
+    /// Encountered a malformed Location header.
+    MalformedLocationHeader(Box<dyn std::error::Error + Send + 'static>),
+    /// Reached maximum redirect limit after encountering Location headers.
+    MaxRedirectLimitReached(u32),
     /// An unexpected failure occurred.
     Unexpected(Box<dyn std::error::Error + Send + 'static>),
 }

@@ -17,6 +17,7 @@ use std::{
     boxed,
     fmt::{self, Debug, Display, Formatter},
     future::Future,
+    io::ErrorKind,
     mem,
     pin::Pin,
     str::FromStr,
@@ -59,6 +60,10 @@ pub trait Client: Send + Sync + private::Sealed {
  * TODO specify list of stati to not retry (e.g. 204)
  */
 
+/// Maximum amount of redirects that the client will follow before
+/// giving up, if not overridden via [ClientBuilder::redirect_limit].
+pub const DEFAULT_REDIRECT_LIMIT: u32 = 16;
+
 /// ClientBuilder provides a series of builder methods to easily construct a [`Client`].
 pub struct ClientBuilder {
     url: Uri,
@@ -68,6 +73,7 @@ pub struct ClientBuilder {
     last_event_id: Option<String>,
     method: String,
     body: Option<String>,
+    max_redirects: Option<u32>,
 }
 
 impl ClientBuilder {
@@ -88,6 +94,7 @@ impl ClientBuilder {
             read_timeout: None,
             last_event_id: None,
             method: String::from("GET"),
+            max_redirects: None,
             body: None,
         })
     }
@@ -137,6 +144,14 @@ impl ClientBuilder {
         self
     }
 
+    /// Customize the client's following behavior when served a redirect.
+    /// To disable following redirects, pass `0`.
+    /// By default, the limit is [`DEFAULT_REDIRECT_LIMIT`].
+    pub fn redirect_limit(mut self, limit: u32) -> ClientBuilder {
+        self.max_redirects = Some(limit);
+        self
+    }
+
     /// Build with a specific client connector.
     pub fn build_with_conn<C>(self, conn: C) -> impl Client
     where
@@ -158,6 +173,7 @@ impl ClientBuilder {
                 method: self.method,
                 body: self.body,
                 reconnect_opts: self.reconnect_opts,
+                max_redirects: self.max_redirects.unwrap_or(DEFAULT_REDIRECT_LIMIT),
             },
             last_event_id: self.last_event_id,
         }
@@ -188,6 +204,7 @@ impl ClientBuilder {
                 method: self.method,
                 body: self.body,
                 reconnect_opts: self.reconnect_opts,
+                max_redirects: self.max_redirects.unwrap_or(DEFAULT_REDIRECT_LIMIT),
             },
             last_event_id: self.last_event_id,
         }
@@ -201,6 +218,7 @@ struct RequestProps {
     method: String,
     body: Option<String>,
     reconnect_opts: ReconnectOptions,
+    max_redirects: u32,
 }
 
 /// A client implementation that connects to a server using the Server-Sent Events protocol
@@ -243,6 +261,7 @@ enum State {
     },
     Connected(#[pin] hyper::Body),
     WaitingToReconnect(#[pin] Sleep),
+    FollowingRedirect(Option<HeaderValue>),
     StreamClosed,
 }
 
@@ -254,6 +273,7 @@ impl State {
             State::Connecting { retry: true, .. } => "connecting(retry)",
             State::Connected(_) => "connected",
             State::WaitingToReconnect(_) => "waiting-to-reconnect",
+            State::FollowingRedirect(_) => "following-redirect",
             State::StreamClosed => "closed",
         }
     }
@@ -273,6 +293,8 @@ pub struct ReconnectingRequest<C> {
     #[pin]
     state: State,
     next_reconnect_delay: Duration,
+    current_url: Uri,
+    redirect_count: u32,
     event_parser: EventParser,
     last_event_id: Option<String>,
 }
@@ -284,11 +306,14 @@ impl<C> ReconnectingRequest<C> {
         last_event_id: Option<String>,
     ) -> ReconnectingRequest<C> {
         let reconnect_delay = props.reconnect_opts.delay;
+        let url = props.url.clone();
         ReconnectingRequest {
             props,
             http,
             state: State::New,
             next_reconnect_delay: reconnect_delay,
+            redirect_count: 0,
+            current_url: url,
             event_parser: EventParser::new(),
             last_event_id,
         }
@@ -300,7 +325,7 @@ impl<C> ReconnectingRequest<C> {
     {
         let mut request_builder = Request::builder()
             .method(self.props.method.as_str())
-            .uri(&self.props.url);
+            .uri(&self.current_url);
 
         for (name, value) in &self.props.headers {
             request_builder = request_builder.header(name, value);
@@ -342,6 +367,21 @@ impl<C> ReconnectingRequest<C> {
         let mut delay = self.props.reconnect_opts.delay;
         let this = self.project();
         mem::swap(this.next_reconnect_delay, &mut delay);
+    }
+
+    fn reset_redirects(self: Pin<&mut Self>) {
+        let url = self.props.url.clone();
+        let this = self.project();
+        *this.current_url = url;
+        *this.redirect_count = 0;
+    }
+
+    fn increment_redirect_counter(self: Pin<&mut Self>) -> bool {
+        if self.redirect_count == self.props.max_redirects {
+            return false;
+        }
+        *self.project().redirect_count += 1;
+        true
     }
 }
 
@@ -400,16 +440,39 @@ where
                     Ok(resp) => {
                         debug!("HTTP response: {:#?}", resp);
 
-                        if !resp.status().is_success() {
-                            self.as_mut().project().state.set(State::New);
-                            return Poll::Ready(Some(Err(Error::HttpRequest(resp.status()))));
+                        if resp.status().is_success() {
+                            self.as_mut().reset_backoff();
+                            self.as_mut().reset_redirects();
+                            self.as_mut()
+                                .project()
+                                .state
+                                .set(State::Connected(resp.into_body()));
+                            continue;
                         }
 
-                        self.as_mut().reset_backoff();
-                        self.as_mut()
-                            .project()
-                            .state
-                            .set(State::Connected(resp.into_body()));
+                        if resp.status() == 301 || resp.status() == 307 {
+                            debug!("got redirected ({})", resp.status());
+
+                            if self.as_mut().increment_redirect_counter() {
+                                debug!("following redirect {}", self.redirect_count);
+
+                                self.as_mut().project().state.set(State::FollowingRedirect(
+                                    resp.headers().get(hyper::header::LOCATION).cloned(),
+                                ));
+                                continue;
+                            } else {
+                                debug!("redirect limit reached ({})", self.props.max_redirects);
+
+                                self.as_mut().project().state.set(State::StreamClosed);
+                                return Poll::Ready(Some(Err(Error::MaxRedirectLimitReached(
+                                    self.props.max_redirects,
+                                ))));
+                            }
+                        }
+
+                        self.as_mut().reset_redirects();
+                        self.as_mut().project().state.set(State::New);
+                        return Poll::Ready(Some(Err(Error::UnexpectedResponse(resp.status()))));
                     }
                     Err(e) => {
                         // This seems basically impossible. AFAIK we can only get this way if we
@@ -424,6 +487,16 @@ where
                             .project()
                             .state
                             .set(State::WaitingToReconnect(delay(duration, "retrying")))
+                    }
+                },
+                StateProj::FollowingRedirect(maybe_header) => match uri_from_header(maybe_header) {
+                    Ok(uri) => {
+                        *self.as_mut().project().current_url = uri;
+                        self.as_mut().project().state.set(State::New);
+                    }
+                    Err(e) => {
+                        self.as_mut().project().state.set(State::StreamClosed);
+                        return Poll::Ready(Some(Err(e)));
                     }
                 },
                 StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
@@ -471,6 +544,23 @@ where
             };
         }
     }
+}
+
+fn uri_from_header(maybe_header: &Option<HeaderValue>) -> Result<Uri> {
+    let header = maybe_header.as_ref().ok_or_else(|| {
+        Error::MalformedLocationHeader(Box::new(std::io::Error::new(
+            ErrorKind::NotFound,
+            "missing Location header",
+        )))
+    })?;
+
+    let header_string = header
+        .to_str()
+        .map_err(|e| Error::MalformedLocationHeader(Box::new(e)))?;
+
+    header_string
+        .parse::<Uri>()
+        .map_err(|e| Error::MalformedLocationHeader(Box::new(e)))
 }
 
 fn delay(dur: Duration, description: &str) -> Sleep {
