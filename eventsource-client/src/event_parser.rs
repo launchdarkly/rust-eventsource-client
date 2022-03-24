@@ -288,16 +288,14 @@ impl EventParser {
         //  * the first line should be appended to the incomplete line, if any
 
         if let Some(incomplete_line) = self.incomplete_line.as_mut() {
-            let line = lines.next().expect("Should not be none!");
-            // split always returns at least one item
-            trace!(
-                "extending line from previous chunk: {:?}+{:?}",
-                logify(incomplete_line),
-                logify(line)
-            );
+            if let Some(line) = lines.next() {
+                trace!(
+                    "extending line from previous chunk: {:?}+{:?}",
+                    logify(incomplete_line),
+                    logify(line)
+                );
 
-            self.last_char_was_cr = false;
-            if !line.is_empty() {
+                self.last_char_was_cr = false;
                 // Checking the last character handles lines where the last character is a
                 // terminator, but also where the entire line is a terminator.
                 match line.last().unwrap() {
