@@ -281,7 +281,6 @@ impl EventParser {
     // incomplete lines from previous chunks.
     fn decode_and_buffer_lines(&mut self, chunk: Bytes) {
         let mut lines = chunk.split_inclusive(|&b| b == b'\n' || b == b'\r');
-
         // The first and last elements in this split are special. The spec requires lines to be
         // terminated. But lines may span chunks, so:
         //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
@@ -289,10 +288,8 @@ impl EventParser {
         //  * the first line should be appended to the incomplete line, if any
 
         if let Some(incomplete_line) = self.incomplete_line.as_mut() {
-            let line = lines
-                .next()
-                // split always returns at least one item
-                .unwrap();
+            let line = lines.next().expect("Should not be none!");
+            // split always returns at least one item
             trace!(
                 "extending line from previous chunk: {:?}+{:?}",
                 logify(incomplete_line),
