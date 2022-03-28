@@ -289,11 +289,6 @@ impl EventParser {
 
         if let Some(incomplete_line) = self.incomplete_line.as_mut() {
             if let Some(line) = lines.next() {
-                assert!(
-                    !line.is_empty(),
-                    "split_inclusive should never yield an empty line"
-                );
-
                 trace!(
                     "extending line from previous chunk: {:?}+{:?}",
                     logify(incomplete_line),
@@ -301,22 +296,24 @@ impl EventParser {
                 );
 
                 self.last_char_was_cr = false;
-                // Checking the last character handles lines where the last character is a
-                // terminator, but also where the entire line is a terminator.
-                match line.last().unwrap() {
-                    b'\r' => {
-                        incomplete_line.extend_from_slice(&line[..line.len() - 1]);
-                        let il = self.incomplete_line.take();
-                        self.complete_lines.push_back(il.unwrap());
-                        self.last_char_was_cr = true;
-                    }
-                    b'\n' => {
-                        incomplete_line.extend_from_slice(&line[..line.len() - 1]);
-                        let il = self.incomplete_line.take();
-                        self.complete_lines.push_back(il.unwrap());
-                    }
-                    _ => incomplete_line.extend_from_slice(line),
-                };
+                if !line.is_empty() {
+                    // Checking the last character handles lines where the last character is a
+                    // terminator, but also where the entire line is a terminator.
+                    match line.last().unwrap() {
+                        b'\r' => {
+                            incomplete_line.extend_from_slice(&line[..line.len() - 1]);
+                            let il = self.incomplete_line.take();
+                            self.complete_lines.push_back(il.unwrap());
+                            self.last_char_was_cr = true;
+                        }
+                        b'\n' => {
+                            incomplete_line.extend_from_slice(&line[..line.len() - 1]);
+                            let il = self.incomplete_line.take();
+                            self.complete_lines.push_back(il.unwrap());
+                        }
+                        _ => incomplete_line.extend_from_slice(line),
+                    };
+                }
             }
         }
 
