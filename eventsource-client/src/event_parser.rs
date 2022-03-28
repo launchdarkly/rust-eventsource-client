@@ -289,6 +289,11 @@ impl EventParser {
 
         if let Some(incomplete_line) = self.incomplete_line.as_mut() {
             if let Some(line) = lines.next() {
+                assert!(
+                    !line.is_empty(),
+                    "split_inclusive should never yield an empty line"
+                );
+
                 trace!(
                     "extending line from previous chunk: {:?}+{:?}",
                     logify(incomplete_line),
@@ -370,6 +375,7 @@ impl EventParser {
 #[cfg(test)]
 mod tests {
     use super::{Error::*, *};
+    use proptest::proptest;
     use test_case::test_case;
 
     fn field<'a>(key: &'a str, value: &'a str) -> Result<Option<(&'a str, &'a str)>> {
@@ -665,5 +671,14 @@ mod tests {
     fn read_contents_from_file(name: &str) -> Vec<u8> {
         std::fs::read(format!("test-data/{}", name))
             .unwrap_or_else(|_| panic!("couldn't read {}", name))
+    }
+
+    proptest! {
+        #[test]
+        fn test_decode_and_buffer_lines_does_not_crash(next in "(\r\n|\r|\n)*event: [^\n\r:]*(\r\n|\r|\n)", previous in "(\r\n|\r|\n)*event: [^\n\r:]*(\r\n|\r|\n)") {
+            let mut parser = EventParser::new();
+            parser.incomplete_line = Some(previous.as_bytes().to_vec());
+            parser.decode_and_buffer_lines(Bytes::from(next));
+        }
     }
 }
