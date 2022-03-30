@@ -2,18 +2,14 @@ version: 2
 jobs:
   build:
     docker:
-      - image: circleci/rust:latest
-
+      - image: cimg/rust:1.59.0
     steps:
       - checkout
-
       - run:
-          name: Install clippy
-          command: rustup component add clippy
-      - run:
-          name: Install rustfmt
-          command: rustup component add rustfmt
-
+          name: Check Version
+          command: |
+            cargo --version
+            rustc --version
       - run:
           name: Check consistent formatting
           command: cargo fmt && git diff --exit-code

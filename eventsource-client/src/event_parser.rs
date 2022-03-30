@@ -281,7 +281,6 @@ impl EventParser {
     // incomplete lines from previous chunks.
     fn decode_and_buffer_lines(&mut self, chunk: Bytes) {
         let mut lines = chunk.split_inclusive(|&b| b == b'\n' || b == b'\r');
-
         // The first and last elements in this split are special. The spec requires lines to be
         // terminated. But lines may span chunks, so:
         //  * the last line, if non-empty (i.e. if chunk didn't end with a line terminator),
@@ -289,34 +288,32 @@ impl EventParser {
         //  * the first line should be appended to the incomplete line, if any
 
         if let Some(incomplete_line) = self.incomplete_line.as_mut() {
-            let line = lines
-                .next()
-                // split always returns at least one item
-                .unwrap();
-            trace!(
-                "extending line from previous chunk: {:?}+{:?}",
-                logify(incomplete_line),
-                logify(line)
-            );
+            if let Some(line) = lines.next() {
+                trace!(
+                    "extending line from previous chunk: {:?}+{:?}",
+                    logify(incomplete_line),
+                    logify(line)
+                );
 
-            self.last_char_was_cr = false;
-            if !line.is_empty() {
-                // Checking the last character handles lines where the last character is a
-                // terminator, but also where the entire line is a terminator.
-                match line.last().unwrap() {
-                    b'\r' => {
-                        incomplete_line.extend_from_slice(&line[..line.len() - 1]);
-                        let il = self.incomplete_line.take();
-                        self.complete_lines.push_back(il.unwrap());
-                        self.last_char_was_cr = true;
-                    }
-                    b'\n' => {
-                        incomplete_line.extend_from_slice(&line[..line.len() - 1]);
-                        let il = self.incomplete_line.take();
-                        self.complete_lines.push_back(il.unwrap());
-                    }
-                    _ => incomplete_line.extend_from_slice(line),
-                };
+                self.last_char_was_cr = false;
+                if !line.is_empty() {
+                    // Checking the last character handles lines where the last character is a
+                    // terminator, but also where the entire line is a terminator.
+                    match line.last().unwrap() {
+                        b'\r' => {
+                            incomplete_line.extend_from_slice(&line[..line.len() - 1]);
+                            let il = self.incomplete_line.take();
+                            self.complete_lines.push_back(il.unwrap());
+                            self.last_char_was_cr = true;
+                        }
+                        b'\n' => {
+                            incomplete_line.extend_from_slice(&line[..line.len() - 1]);
+                            let il = self.incomplete_line.take();
+                            self.complete_lines.push_back(il.unwrap());
+                        }
+                        _ => incomplete_line.extend_from_slice(line),
+                    };
+                }
             }
         }
 
@@ -375,6 +372,7 @@ impl EventParser {
 #[cfg(test)]
 mod tests {
     use super::{Error::*, *};
+    use proptest::proptest;
     use test_case::test_case;
 
     fn field<'a>(key: &'a str, value: &'a str) -> Result<Option<(&'a str, &'a str)>> {
@@ -670,5 +668,14 @@ mod tests {
     fn read_contents_from_file(name: &str) -> Vec<u8> {
         std::fs::read(format!("test-data/{}", name))
             .unwrap_or_else(|_| panic!("couldn't read {}", name))
+    }
+
+    proptest! {
+        #[test]
+        fn test_decode_and_buffer_lines_does_not_crash(next in "(\r\n|\r|\n)*event: [^\n\r:]*(\r\n|\r|\n)", previous in "(\r\n|\r|\n)*event: [^\n\r:]*(\r\n|\r|\n)") {
+            let mut parser = EventParser::new();
+            parser.incomplete_line = Some(previous.as_bytes().to_vec());
+            parser.decode_and_buffer_lines(Bytes::from(next));
+        }
     }
 }
