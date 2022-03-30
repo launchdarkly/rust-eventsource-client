@@ -17,10 +17,16 @@ jobs:
       - run: cargo test --all-features
       - run: cargo doc --no-deps
       - run: cargo clippy --all-features -- -D warnings
-
       - store_artifacts:
           path: target/doc
           destination: doc
+      - run:
+          name: Gather Coverage
+          command: ./coverage.sh --html
+      - store_artifacts:
+          name: Upload Coverage
+          path: target/llvm-cov/html
+          destination: coverage
       - run:
           command: make start-contract-test-service
           background: true
