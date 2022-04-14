@@ -2,6 +2,10 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.10.1] - 2022-04-14
+### Fixed:
+- Comment events were incorrectly consuming non-comment event data. Now comment events are emitted as they are parsed and can no longer affect non-comment event data.
+
 ## [0.10.0] - 2022-03-23
 ### Added:
 - Added support for following 301 & 307 redirects with configurable redirect limit.
