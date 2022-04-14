@@ -10,7 +10,6 @@ use super::error::{Error, Result};
 struct EventData {
     pub event_type: String,
     pub data: String,
-    pub comment: Option<String>,
     pub id: Option<String>,
     pub retry: Option<u64>,
 }
@@ -43,10 +42,6 @@ impl TryFrom<EventData> for Option<SSE> {
     fn try_from(event_data: EventData) -> std::result::Result<Self, Self::Error> {
         if event_data == EventData::default() {
             return Err(Error::InvalidEvent);
-        }
-
-        if event_data.comment.is_some() {
-            return Ok(Some(SSE::Comment(event_data.comment.unwrap())));
         }
 
         if event_data.data.is_empty() {
@@ -217,7 +212,7 @@ impl EventParser {
                         .get_or_insert_with(|| EventData::new().with_id(id.clone()));
 
                     if key == "comment" {
-                        event_data.comment = Some(value.to_string());
+                        self.sse.push_back(SSE::Comment(value.to_string()));
                     } else if key == "event" {
                         event_data.event_type = value.to_string()
                     } else if key == "data" {
@@ -253,9 +248,7 @@ impl EventParser {
 
                 trace!(
                     "seen empty line, event_data is {:?})",
-                    self.event_data
-                        .as_ref()
-                        .map(|event_data| &event_data.event_type)
+                    event_data.as_ref().map(|event_data| &event_data.event_type)
                 );
 
                 if let Some(event_data) = event_data {
@@ -520,9 +513,24 @@ mod tests {
     #[test_case(b":hello\n"; "with LF")]
     #[test_case(b":hello\r"; "with CR")]
     #[test_case(b":hello\r\n"; "with CRLF")]
-    fn test_decode_chunks_comments_are_ignored(chunk: &'static [u8]) {
+    fn test_decode_chunks_comments_are_generated(chunk: &'static [u8]) {
         let mut parser = EventParser::new();
         assert!(parser.process_bytes(Bytes::from(chunk)).is_ok());
+        assert!(parser.get_event().is_some());
+    }
+
+    #[test]
+    fn test_comment_is_separate_from_event() {
+        let mut parser = EventParser::new();
+        let result = parser.process_bytes(Bytes::from(":comment\ndata:hello\n\n"));
+        assert!(result.is_ok());
+
+        let comment = parser.get_event();
+        assert!(matches!(comment, Some(SSE::Comment(_))));
+
+        let event = parser.get_event();
+        assert!(matches!(event, Some(SSE::Event(_))));
+
         assert!(parser.get_event().is_none());
     }
 
