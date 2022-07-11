@@ -206,14 +206,17 @@ impl EventParser {
                 }
 
                 if let Some((key, value)) = parse_field(&line)? {
+                    if key == "comment" {
+                        self.sse.push_back(SSE::Comment(value.to_string()));
+                        continue;
+                    }
+
                     let id = &self.last_event_id;
                     let event_data = self
                         .event_data
                         .get_or_insert_with(|| EventData::new().with_id(id.clone()));
 
-                    if key == "comment" {
-                        self.sse.push_back(SSE::Comment(value.to_string()));
-                    } else if key == "event" {
+                    if key == "event" {
                         event_data.event_type = value.to_string()
                     } else if key == "data" {
                         event_data.append_data(value);
@@ -530,6 +533,18 @@ mod tests {
 
         let event = parser.get_event();
         assert!(matches!(event, Some(SSE::Event(_))));
+
+        assert!(parser.get_event().is_none());
+    }
+
+    #[test]
+    fn test_comment_with_trailing_blank_line() {
+        let mut parser = EventParser::new();
+        let result = parser.process_bytes(Bytes::from(":comment\n\r\n\r"));
+        assert!(result.is_ok());
+
+        let comment = parser.get_event();
+        assert!(matches!(comment, Some(SSE::Comment(_))));
 
         assert!(parser.get_event().is_none());
     }
