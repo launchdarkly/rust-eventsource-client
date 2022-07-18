@@ -1,4 +1,5 @@
 version: 2
+
 jobs:
   build:
     docker:
@@ -34,30 +35,8 @@ jobs:
           name: run contract tests
           command: make run-contract-tests
 
-  publish:
-    docker:
-      - image: circleci/rust:latest
-
-    steps:
-      - checkout
-
-      - run:
-          name: cargo publish
-          command: cargo publish --verbose --token $CRATES_IO_TOKEN
-
 workflows:
   version: 2
-  build-publish:
+  build:
     jobs:
-      - build:
-          filters:
-            tags:
-              only: /.*/
-      - publish:
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-          requires:
-            - build
+      - build
