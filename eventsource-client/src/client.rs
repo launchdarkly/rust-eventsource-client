@@ -18,11 +18,10 @@ use std::{
     fmt::{self, Debug, Display, Formatter},
     future::Future,
     io::ErrorKind,
-    mem,
     pin::Pin,
     str::FromStr,
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tokio::{
@@ -39,6 +38,7 @@ use hyper_timeout::TimeoutConnector;
 use crate::event_parser::EventParser;
 use crate::event_parser::SSE;
 
+use crate::retry::{BackoffRetry, RetryStrategy};
 use std::error::Error as StdError;
 
 #[cfg(feature = "rustls")]
@@ -292,7 +292,7 @@ pub struct ReconnectingRequest<C> {
     props: RequestProps,
     #[pin]
     state: State,
-    next_reconnect_delay: Duration,
+    retry_strategy: Box<dyn RetryStrategy + Send + Sync>,
     current_url: Uri,
     redirect_count: u32,
     event_parser: EventParser,
@@ -306,12 +306,19 @@ impl<C> ReconnectingRequest<C> {
         last_event_id: Option<String>,
     ) -> ReconnectingRequest<C> {
         let reconnect_delay = props.reconnect_opts.delay;
+        let delay_max = props.reconnect_opts.delay_max;
+        let backoff_factor = props.reconnect_opts.backoff_factor;
+
         let url = props.url.clone();
         ReconnectingRequest {
             props,
             http,
             state: State::New,
-            next_reconnect_delay: reconnect_delay,
+            retry_strategy: Box::new(BackoffRetry::new(
+                reconnect_delay,
+                delay_max,
+                backoff_factor,
+            )),
             redirect_count: 0,
             current_url: url,
             event_parser: EventParser::new(),
@@ -352,23 +359,6 @@ impl<C> ReconnectingRequest<C> {
         Ok(self.http.request(request))
     }
 
-    fn backoff(mut self: Pin<&mut Self>) -> Duration {
-        let delay = self.next_reconnect_delay;
-        let this = self.as_mut().project();
-        let mut next_reconnect_delay = std::cmp::min(
-            this.props.reconnect_opts.delay_max,
-            *this.next_reconnect_delay * this.props.reconnect_opts.backoff_factor,
-        );
-        mem::swap(this.next_reconnect_delay, &mut next_reconnect_delay);
-        delay
-    }
-
-    fn reset_backoff(self: Pin<&mut Self>) {
-        let mut delay = self.props.reconnect_opts.delay;
-        let this = self.project();
-        mem::swap(this.next_reconnect_delay, &mut delay);
-    }
-
     fn reset_redirects(self: Pin<&mut Self>) {
         let url = self.props.url.clone();
         let this = self.project();
@@ -402,8 +392,8 @@ where
                         *this.last_event_id = evt.id.clone();
 
                         if let Some(retry) = evt.retry {
-                            this.props.reconnect_opts.delay = Duration::from_millis(retry);
-                            self.as_mut().reset_backoff();
+                            this.retry_strategy
+                                .change_base_delay(Duration::from_millis(retry));
                         }
                         Poll::Ready(Some(Ok(event)))
                     }
@@ -441,7 +431,7 @@ where
                         debug!("HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
-                            self.as_mut().reset_backoff();
+                            self.as_mut().project().retry_strategy.reset(Instant::now());
                             self.as_mut().reset_redirects();
                             self.as_mut()
                                 .project()
@@ -482,7 +472,11 @@ where
                             self.as_mut().project().state.set(State::New);
                             return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
                         }
-                        let duration = self.as_mut().backoff();
+                        let duration = self
+                            .as_mut()
+                            .project()
+                            .retry_strategy
+                            .next_delay(Instant::now());
                         self.as_mut()
                             .project()
                             .state
@@ -506,7 +500,11 @@ where
                     }
                     Some(Err(e)) => {
                         if self.props.reconnect_opts.reconnect {
-                            let duration = self.as_mut().backoff();
+                            let duration = self
+                                .as_mut()
+                                .project()
+                                .retry_strategy
+                                .next_delay(Instant::now());
                             self.as_mut()
                                 .project()
                                 .state
@@ -524,7 +522,11 @@ where
                         }
                     }
                     None => {
-                        let duration = self.as_mut().backoff();
+                        let duration = self
+                            .as_mut()
+                            .project()
+                            .retry_strategy
+                            .next_delay(Instant::now());
                         self.as_mut()
                             .project()
                             .state
