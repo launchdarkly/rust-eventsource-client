@@ -318,6 +318,7 @@ impl<C> ReconnectingRequest<C> {
                 reconnect_delay,
                 delay_max,
                 backoff_factor,
+                true,
             )),
             redirect_count: 0,
             current_url: url,
