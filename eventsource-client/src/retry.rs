@@ -11,7 +11,7 @@ pub(crate) trait RetryStrategy {
     fn reset(&mut self, current_time: Instant);
 }
 
-const DEFAULT_RESET_RETRY_INTERVAL: u64 = 60;
+const DEFAULT_RESET_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 pub(crate) struct BackoffRetry {
     base_delay: Duration,
@@ -29,7 +29,7 @@ impl BackoffRetry {
             base_delay,
             max_delay,
             backoff_factor,
-            reset_interval: Duration::from_secs(DEFAULT_RESET_RETRY_INTERVAL),
+            reset_interval: DEFAULT_RESET_RETRY_INTERVAL,
             next_delay: base_delay,
             good_since: None,
         }
