@@ -42,11 +42,11 @@ impl RetryStrategy for BackoffRetry {
 
         if let Some(good_since) = self.good_since {
             if current_time - good_since >= self.reset_interval {
-                self.reset(current_time);
                 next_delay = self.base_delay;
             }
         }
 
+        self.good_since = None;
         self.next_delay = std::cmp::min(self.max_delay, next_delay * self.backoff_factor);
 
         next_delay
@@ -115,6 +115,28 @@ mod tests {
             base * 4
         );
         assert_eq!(retry.next_delay(start.add(Duration::from_secs(3))), max);
+    }
+
+    #[test]
+    fn test_retry_holds_at_max() {
+        let base = Duration::from_secs(20);
+        let max = Duration::from_secs(30);
+
+        let mut retry = BackoffRetry::new(base, max, 2);
+        let start = Instant::now();
+        retry.reset(start);
+
+        let time = start.add(Duration::from_secs(20));
+        let delay = retry.next_delay(time);
+        assert_eq!(delay, base);
+
+        let time = time.add(Duration::from_secs(20));
+        let delay = retry.next_delay(time);
+        assert_eq!(delay, max);
+
+        let time = time.add(Duration::from_secs(20));
+        let delay = retry.next_delay(time);
+        assert_eq!(delay, max);
     }
 
     #[test]
