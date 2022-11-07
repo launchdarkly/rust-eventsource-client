@@ -2,6 +2,11 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.11.0] - 2022-11-07
+### Fixed:
+- Add missing retry interval reset behavior.
+- Add missing jitter to retry strategy.
+
 ## [0.10.2] - 2022-10-28
 ### Fixed:
 - Correctly handle comment payloads.
