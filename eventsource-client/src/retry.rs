@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use rand::{thread_rng, Rng};
+
 pub(crate) trait RetryStrategy {
     /// Return the next amount of time a failed request should delay before re-attempting.
     fn next_delay(&mut self, current_time: Instant) -> Duration;
@@ -17,6 +19,7 @@ pub(crate) struct BackoffRetry {
     base_delay: Duration,
     max_delay: Duration,
     backoff_factor: u32,
+    include_jitter: bool,
 
     reset_interval: Duration,
     next_delay: Duration,
@@ -24,11 +27,17 @@ pub(crate) struct BackoffRetry {
 }
 
 impl BackoffRetry {
-    pub fn new(base_delay: Duration, max_delay: Duration, backoff_factor: u32) -> Self {
+    pub fn new(
+        base_delay: Duration,
+        max_delay: Duration,
+        backoff_factor: u32,
+        include_jitter: bool,
+    ) -> Self {
         Self {
             base_delay,
             max_delay,
             backoff_factor,
+            include_jitter,
             reset_interval: DEFAULT_RESET_RETRY_INTERVAL,
             next_delay: base_delay,
             good_since: None,
@@ -38,18 +47,22 @@ impl BackoffRetry {
 
 impl RetryStrategy for BackoffRetry {
     fn next_delay(&mut self, current_time: Instant) -> Duration {
-        let mut next_delay = self.next_delay;
+        let mut current_delay = self.next_delay;
 
         if let Some(good_since) = self.good_since {
             if current_time - good_since >= self.reset_interval {
-                next_delay = self.base_delay;
+                current_delay = self.base_delay;
             }
         }
 
         self.good_since = None;
-        self.next_delay = std::cmp::min(self.max_delay, next_delay * self.backoff_factor);
+        self.next_delay = std::cmp::min(self.max_delay, current_delay * self.backoff_factor);
 
-        next_delay
+        if self.include_jitter {
+            thread_rng().gen_range(current_delay / 2..=current_delay)
+        } else {
+            current_delay
+        }
     }
 
     fn change_base_delay(&mut self, base_delay: Duration) {
@@ -76,7 +89,7 @@ mod tests {
     #[test]
     fn test_fixed_retry() {
         let base = Duration::from_secs(10);
-        let mut retry = BackoffRetry::new(base, Duration::from_secs(30), 1);
+        let mut retry = BackoffRetry::new(base, Duration::from_secs(30), 1, false);
         let start = Instant::now() - Duration::from_secs(60);
 
         assert_eq!(retry.next_delay(start), base);
@@ -87,7 +100,7 @@ mod tests {
     #[test]
     fn test_able_to_reset_base_delay() {
         let base = Duration::from_secs(10);
-        let mut retry = BackoffRetry::new(base, Duration::from_secs(30), 1);
+        let mut retry = BackoffRetry::new(base, Duration::from_secs(30), 1, false);
         let start = Instant::now();
 
         assert_eq!(retry.next_delay(start), base);
@@ -102,7 +115,7 @@ mod tests {
     fn test_with_backoff() {
         let base = Duration::from_secs(10);
         let max = Duration::from_secs(60);
-        let mut retry = BackoffRetry::new(base, max, 2);
+        let mut retry = BackoffRetry::new(base, max, 2, false);
         let start = Instant::now() - Duration::from_secs(60);
 
         assert_eq!(retry.next_delay(start), base);
@@ -118,11 +131,22 @@ mod tests {
     }
 
     #[test]
+    fn test_with_jitter() {
+        let base = Duration::from_secs(10);
+        let max = Duration::from_secs(60);
+        let mut retry = BackoffRetry::new(base, max, 1, true);
+        let start = Instant::now() - Duration::from_secs(60);
+
+        let delay = retry.next_delay(start);
+        assert!(base / 2 <= delay && delay <= base);
+    }
+
+    #[test]
     fn test_retry_holds_at_max() {
         let base = Duration::from_secs(20);
         let max = Duration::from_secs(30);
 
-        let mut retry = BackoffRetry::new(base, max, 2);
+        let mut retry = BackoffRetry::new(base, max, 2, false);
         let start = Instant::now();
         retry.reset(start);
 
@@ -146,7 +170,7 @@ mod tests {
         let reset_interval = Duration::from_secs(45);
 
         // Prepare a retry strategy that has succeeded at a specific point.
-        let mut retry = BackoffRetry::new(base, max, 2);
+        let mut retry = BackoffRetry::new(base, max, 2, false);
         retry.reset_interval = reset_interval;
         let start = Instant::now() - Duration::from_secs(60);
         retry.reset(start);
