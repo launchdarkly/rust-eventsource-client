@@ -50,6 +50,7 @@ struct Config {
 #[derive(Serialize, Debug)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum EventType {
+    Connected {},
     Event { event: Event },
     Comment { comment: String },
     Error { error: String },
@@ -66,6 +67,7 @@ impl From<es::SSE> for EventType {
                 },
             },
             es::SSE::Comment(comment) => Self::Comment { comment },
+            es::SSE::Connected(_) => Self::Connected {},
         }
     }
 }

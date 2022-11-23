@@ -403,6 +403,7 @@ where
                         Poll::Ready(Some(Ok(event)))
                     }
                     SSE::Comment(_) => Poll::Ready(Some(Ok(event))),
+                    SSE::Connected(_) => Poll::Ready(Some(Ok(event))),
                 };
             }
 
@@ -436,13 +437,15 @@ where
                         debug!("HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
+                            let reply =
+                                Poll::Ready(Some(Ok(SSE::Connected(resp.headers().to_owned()))));
                             self.as_mut().project().retry_strategy.reset(Instant::now());
                             self.as_mut().reset_redirects();
                             self.as_mut()
                                 .project()
                                 .state
                                 .set(State::Connected(resp.into_body()));
-                            continue;
+                            return reply;
                         }
 
                         if resp.status() == 301 || resp.status() == 307 {
@@ -574,19 +577,6 @@ fn delay(dur: Duration, description: &str) -> Sleep {
     info!("Waiting {:?} before {}", dur, description);
     tokio::time::sleep(dur)
 }
-
-#[derive(Debug)]
-struct StatusError {
-    status: StatusCode,
-}
-
-impl Display for StatusError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Invalid status code: {}", self.status)
-    }
-}
-
-impl std::error::Error for StatusError {}
 
 mod private {
     use crate::client::ClientImpl;

@@ -36,6 +36,10 @@ impl Inner {
             match stream.try_next().await {
                 Ok(Some(event)) => {
                     let event_type: EventType = event.into();
+                    if let EventType::Connected {} = event_type {
+                        continue;
+                    }
+
                     if !self.send_message(event_type, &client).await {
                         break;
                     }
