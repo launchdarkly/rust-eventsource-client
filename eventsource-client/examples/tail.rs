@@ -46,6 +46,9 @@ fn tail_events(client: impl es::Client) -> impl Stream<Item = Result<(), ()>> {
             es::SSE::Comment(comment) => {
                 println!("got a comment: \n{}", comment)
             }
+            es::SSE::Connected(headers) => {
+                println!("got a connection start with headers: \n{:?}", headers)
+            }
         })
         .map_err(|err| eprintln!("error streaming events: {:?}", err))
 }
