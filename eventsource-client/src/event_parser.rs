@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, convert::TryFrom, str::from_utf8};
 
-use hyper::{body::Bytes, HeaderMap, http::HeaderValue};
+use hyper::{body::Bytes, http::HeaderValue, HeaderMap};
 use log::{debug, log_enabled, trace};
 use pin_project::pin_project;
 
@@ -34,7 +34,7 @@ impl EventData {
 pub enum SSE {
     Event(Event),
     Comment(String),
-    ConnectionStart(Option<HeaderMap<HeaderValue>>)
+    ConnectionStart(HeaderMap<HeaderValue>),
 }
 
 impl TryFrom<EventData> for Option<SSE> {

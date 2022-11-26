@@ -323,7 +323,7 @@ impl<C> ReconnectingRequest<C> {
             redirect_count: 0,
             current_url: url,
             event_parser: EventParser::new(),
-            last_event_id
+            last_event_id,
         }
     }
 
@@ -399,7 +399,9 @@ where
                         Poll::Ready(Some(Ok(event)))
                     }
                     SSE::Comment(_) => Poll::Ready(Some(Ok(event))),
-                    SSE::ConnectionStart(value) => Poll::Ready(Some(Ok(SSE::ConnectionStart(value)))),
+                    SSE::ConnectionStart(value) => {
+                        Poll::Ready(Some(Ok(SSE::ConnectionStart(value))))
+                    }
                 };
             }
 
@@ -433,7 +435,9 @@ where
                         debug!("HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
-                            let reply = Poll::Ready(Some(Ok(SSE::ConnectionStart(Some(resp.headers().to_owned())))));
+                            let reply = Poll::Ready(Some(Ok(SSE::ConnectionStart(
+                                resp.headers().to_owned(),
+                            ))));
                             self.as_mut().project().retry_strategy.reset(Instant::now());
                             self.as_mut().reset_redirects();
                             self.as_mut()
