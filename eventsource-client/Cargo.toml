@@ -16,6 +16,7 @@ exclude = [
 futures = "0.3.21"
 hyper = { version = "0.14.17", features = ["client", "http1", "tcp"] }
 hyper-rustls = { version = "0.23.1", optional = true }
+hyper-tls = { version = "0.5.0", optional = true }
 log = "0.4.6"
 pin-project = "1.0.10"
 tokio = { version = "1.17.0", features = ["time"] }
@@ -30,10 +31,10 @@ tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
 test-case = "2.2.2"
 proptest = "1.0.0"
 
-
 [features]
 default = ["rustls"]
 rustls = ["hyper-rustls", "hyper/http2"]
+hypertls = ["hyper-tls", "hyper/http2"]
 
 [[example]]
 name = "tail"

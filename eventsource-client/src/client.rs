@@ -10,7 +10,9 @@ use hyper::{
     Body, Request, StatusCode, Uri,
 };
 #[cfg(feature = "rustls")]
-use hyper_rustls::{HttpsConnector as RustlsConnector, HttpsConnectorBuilder};
+use hyper_rustls::{HttpsConnector as TlsConnector, HttpsConnectorBuilder};
+#[cfg(all(feature = "hypertls", not(feature = "rustls")))]
+use hyper_tls::HttpsConnector as TlsConnector;
 use log::{debug, info, trace, warn};
 use pin_project::pin_project;
 use std::{
@@ -41,8 +43,8 @@ use crate::event_parser::SSE;
 use crate::retry::{BackoffRetry, RetryStrategy};
 use std::error::Error as StdError;
 
-#[cfg(feature = "rustls")]
-pub type HttpsConnector = RustlsConnector<HttpConnector>;
+#[cfg(any(feature = "hypertls", feature = "rustls"))]
+pub type HttpsConnector = TlsConnector<HttpConnector>;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -184,14 +186,10 @@ impl ClientBuilder {
         self.build_with_conn(HttpConnector::new())
     }
 
-    #[cfg(feature = "rustls")]
+    #[cfg(any(feature = "hypertls", feature = "rustls"))]
     /// Build with an HTTPS client connector, using the OS root certificate store.
     pub fn build(self) -> impl Client {
-        let conn = HttpsConnectorBuilder::new()
-            .with_native_roots()
-            .https_or_http()
-            .enable_http1()
-            .build();
+        let conn = https_connector();
         self.build_with_conn(conn)
     }
 
@@ -212,6 +210,23 @@ impl ClientBuilder {
             },
             last_event_id: self.last_event_id,
         }
+    }
+}
+
+#[cfg(any(feature = "hypertls", feature = "rustls"))]
+/// Build with an HttpsConnector, using the OS root certificate store.
+pub fn https_connector() -> HttpsConnector {
+    #[cfg(feature = "rustls")]
+    {
+        HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .https_or_http()
+            .enable_http1()
+            .build()
+    }
+    #[cfg(all(feature = "hypertls", not(feature = "rustls")))]
+    {
+        TlsConnector::new()
     }
 }
 
