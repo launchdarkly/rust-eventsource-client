@@ -7,6 +7,7 @@ use std::{
 };
 
 use eventsource_client as es;
+use hyper_tls::HttpsConnector as TlsConnector;
 
 use crate::{Config, EventType};
 
@@ -124,7 +125,9 @@ impl Inner {
         }
 
         Ok(Box::new(
-            client_builder.reconnect(reconnect_options.build()).build(),
+            client_builder
+                .reconnect(reconnect_options.build())
+                .build_with_conn(TlsConnector::new()),
         ))
     }
 }
