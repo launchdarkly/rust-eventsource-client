@@ -23,8 +23,6 @@ pub enum Error {
     MalformedLocationHeader(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// Reached maximum redirect limit after encountering Location headers.
     MaxRedirectLimitReached(u32),
-    /// An unexpected failure occurred.
-    Unexpected(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl std::fmt::Display for Error {
@@ -38,11 +36,10 @@ impl std::fmt::Display for Error {
             HttpStream(err) => write!(f, "http error: {err}"),
             Eof => write!(f, "eof"),
             UnexpectedEof => write!(f, "unexpected eof"),
-            InvalidLine(line) => write!(f, "invalid line {line}"),
+            InvalidLine(line) => write!(f, "invalid line: {line}"),
             InvalidEvent => write!(f, "invalid event"),
             MalformedLocationHeader(err) => write!(f, "malformed header: {err}"),
-            MaxRedirectLimitReached(limit) => write!(f, "maximum rediret limit reached: {limit}"),
-            Unexpected(_) => write!(f, "timed out"),
+            MaxRedirectLimitReached(limit) => write!(f, "maximum redirect limit reached: {limit}"),
         }
     }
 }
@@ -72,7 +69,6 @@ impl Error {
     pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::HttpStream(err) => Some(err.as_ref()),
-            Error::Unexpected(err) => Some(err.as_ref()),
             _ => None,
         }
     }
