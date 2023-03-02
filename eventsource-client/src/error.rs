@@ -27,6 +27,28 @@ pub enum Error {
     Unexpected(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Error::*;
+        match self {
+            TimedOut => write!(f, "timed out"),
+            StreamClosed => write!(f, "stream closed"),
+            InvalidParameter(err) => write!(f, "invalid parameter: {err}"),
+            UnexpectedResponse(status_code) => write!(f, "unexpected response: {status_code}"),
+            HttpStream(err) => write!(f, "http error: {err}"),
+            Eof => write!(f, "eof"),
+            UnexpectedEof => write!(f, "unexpected eof"),
+            InvalidLine(line) => write!(f, "invalid line {line}"),
+            InvalidEvent => write!(f, "invalid event"),
+            MalformedLocationHeader(err) => write!(f, "malformed header: {err}"),
+            MaxRedirectLimitReached(limit) => write!(f, "maximum rediret limit reached: {limit}"),
+            Unexpected(_) => write!(f, "timed out"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
 impl PartialEq<Error> for Error {
     fn eq(&self, other: &Error) -> bool {
         use Error::*;
@@ -53,15 +75,6 @@ impl Error {
             Error::Unexpected(err) => Some(err.as_ref()),
             _ => None,
         }
-    }
-}
-
-impl<E> From<E> for Error
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    fn from(e: E) -> Error {
-        Error::Unexpected(Box::new(e))
     }
 }
 
