@@ -6,11 +6,11 @@ pub enum Error {
     TimedOut,
     StreamClosed,
     /// An invalid request parameter
-    InvalidParameter(Box<dyn std::error::Error + Send + 'static>),
+    InvalidParameter(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The HTTP response could not be handled.
     UnexpectedResponse(StatusCode),
     /// An error reading from the HTTP response body.
-    HttpStream(Box<dyn std::error::Error + Send + 'static>),
+    HttpStream(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The HTTP response stream ended
     Eof,
     /// The HTTP response stream ended unexpectedly (e.g. in the
@@ -20,11 +20,11 @@ pub enum Error {
     InvalidLine(String),
     InvalidEvent,
     /// Encountered a malformed Location header.
-    MalformedLocationHeader(Box<dyn std::error::Error + Send + 'static>),
+    MalformedLocationHeader(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// Reached maximum redirect limit after encountering Location headers.
     MaxRedirectLimitReached(u32),
     /// An unexpected failure occurred.
-    Unexpected(Box<dyn std::error::Error + Send + 'static>),
+    Unexpected(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl PartialEq<Error> for Error {
@@ -58,7 +58,7 @@ impl Error {
 
 impl<E> From<E> for Error
 where
-    E: std::error::Error + Send + 'static,
+    E: std::error::Error + Send + Sync + 'static,
 {
     fn from(e: E) -> Error {
         Error::Unexpected(Box::new(e))
