@@ -109,7 +109,7 @@ async fn stream(
         Err(_) => return HttpResponse::InternalServerError().body("Unable to retrieve handles"),
     };
 
-    let stream_resource = match req.url_for("stop_stream", &[counter.to_string()]) {
+    let stream_resource = match req.url_for("stop_stream", [counter.to_string()]) {
         Ok(sr) => sr,
         Err(_) => {
             return HttpResponse::InternalServerError()

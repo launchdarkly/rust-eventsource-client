@@ -68,15 +68,20 @@ impl Inner {
             }
         };
 
-        let mut counter = self.callback_counter.lock().unwrap();
+        // send_message is only invoked via the event loop, so this access and following
+        // update will be serialized. The usage of a mutex is for the interior mutability.
+        let counter_val = *self.callback_counter.lock().unwrap();
 
         match client
-            .post(format!("{}/{}", self.callback_url, counter))
+            .post(format!("{}/{}", self.callback_url, counter_val))
             .body(format!("{}\n", json))
             .send()
             .await
         {
-            Ok(_) => *counter += 1,
+            Ok(_) => {
+                let mut counter = self.callback_counter.lock().unwrap();
+                *counter = counter_val + 1
+            }
             Err(e) => {
                 error!("Failed to send post back to test harness {:?}", e);
                 return false;
