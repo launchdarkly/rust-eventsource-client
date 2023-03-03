@@ -30,7 +30,7 @@ impl EventData {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum SSE {
     Event(Event),
     Comment(String),
@@ -70,7 +70,7 @@ impl TryFrom<EventData> for Option<SSE> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Event {
     pub event_type: String,
     pub data: String,
