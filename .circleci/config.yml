@@ -14,13 +14,20 @@ jobs:
       - run:
           name: Check consistent formatting
           command: cargo fmt && git diff --exit-code
-      - run: cargo build
-      - run: cargo test --all-features
-      - run: cargo doc --no-deps
-      - run: cargo clippy --all-features -- -D warnings
+      - run: cargo build -p eventsource-client
+      - run: cargo test --all-features -p eventsource-client
+      - run: cargo doc --no-deps -p eventsource-client
+      - run: cargo clippy --all-features -p eventsource-client -- -D warnings
       - store_artifacts:
           path: target/doc
           destination: doc
+
+  generate-coverage:
+    docker:
+      - image: cimg/rust:1.68.0
+    steps:
+      - checkout
+      - run: cargo build
       - run:
           name: Gather Coverage
           command: ./coverage.sh --html
@@ -28,6 +35,13 @@ jobs:
           name: Upload Coverage
           path: target/llvm-cov/html
           destination: coverage
+
+  contract-tests:
+    docker:
+      - image: cimg/rust:1.68.0
+    steps:
+      - checkout
+      - run: cargo build
       - run:
           command: make start-contract-test-service
           background: true
@@ -40,3 +54,5 @@ workflows:
   build:
     jobs:
       - build
+      - contract-tests
+      - generate-coverage
