@@ -15,7 +15,7 @@ exclude = [
 [dependencies]
 futures = "0.3.21"
 hyper = { version = "0.14.17", features = ["client", "http1", "tcp"] }
-hyper-rustls = { version = "0.22.1", optional = true }
+hyper-rustls = { version = "0.24.1", optional = true }
 log = "0.4.6"
 pin-project = "1.0.10"
 tokio = { version = "1.17.0", features = ["time"] }
@@ -23,17 +23,17 @@ hyper-timeout = "0.4.1"
 rand = "0.8.5"
 
 [dev-dependencies]
-env_logger = "0.7.1"
+env_logger = "0.10.0"
 maplit = "1.0.1"
-simplelog = "0.5.3"
+simplelog = "0.12.1"
 tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
-test-case = "1.2.3"
+test-case = "3.2.1"
 proptest = "1.0.0"
 
 
 [features]
 default = ["rustls"]
-rustls = ["hyper-rustls", "hyper/http2"]
+rustls = ["hyper-rustls", "hyper-rustls/http2"]
 
 [[example]]
 name = "tail"
