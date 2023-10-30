@@ -9,8 +9,6 @@ use hyper::{
     service::Service,
     Body, Request, StatusCode, Uri,
 };
-#[cfg(feature = "rustls")]
-use hyper_rustls::HttpsConnector as RustlsConnector;
 use log::{debug, info, trace, warn};
 use pin_project::pin_project;
 use std::{
@@ -41,6 +39,10 @@ use crate::event_parser::SSE;
 use crate::retry::{BackoffRetry, RetryStrategy};
 use std::error::Error as StdError;
 
+#[cfg(feature = "rustls")]
+use hyper_rustls::HttpsConnector as RustlsConnector;
+#[cfg(feature = "rustls")]
+pub use hyper_rustls::HttpsConnectorBuilder;
 #[cfg(feature = "rustls")]
 pub type HttpsConnector = RustlsConnector<HttpConnector>;
 
@@ -187,7 +189,13 @@ impl ClientBuilder {
     #[cfg(feature = "rustls")]
     /// Build with an HTTPS client connector, using the OS root certificate store.
     pub fn build(self) -> impl Client {
-        let conn = HttpsConnector::with_native_roots();
+        let conn = HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .https_or_http()
+            .enable_http1()
+            .enable_http2()
+            .build();
+
         self.build_with_conn(conn)
     }
 

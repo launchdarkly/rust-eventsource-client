@@ -9,13 +9,12 @@ futures = { version = "0.3.21" }
 serde = { version = "1.0", features = ["derive"] }
 eventsource-client = { path = "../eventsource-client" }
 serde_json = { version = "1.0.39"}
-actix = { version = "0.12.0"}
-actix-web = { version = "4.0.0-beta.10"}
-reqwest = { version = "0.11.6", default_features = false, features = ["json", "rustls-tls"] }
-env_logger = { version = "0.7.1" }
+actix = { version = "0.13.1"}
+actix-web = { version = "4"}
+reqwest = { version = "0.11.6", default-features = false, features = ["json", "rustls-tls"] }
+env_logger = { version = "0.10.0" }
 hyper = { version = "0.14.17", features = ["client", "http1", "tcp"] }
 log = "0.4.6"
 
 [[bin]]
 name = "sse-test-api"
-
