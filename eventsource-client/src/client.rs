@@ -30,7 +30,7 @@ use tokio::{
 use crate::config::ReconnectOptions;
 use crate::error::{Error, Result};
 
-pub use hyper::client::HttpConnector;
+use hyper::client::HttpConnector;
 use hyper_timeout::TimeoutConnector;
 
 use crate::event_parser::EventParser;
@@ -40,11 +40,7 @@ use crate::retry::{BackoffRetry, RetryStrategy};
 use std::error::Error as StdError;
 
 #[cfg(feature = "rustls")]
-use hyper_rustls::HttpsConnector as RustlsConnector;
-#[cfg(feature = "rustls")]
-pub use hyper_rustls::HttpsConnectorBuilder;
-#[cfg(feature = "rustls")]
-pub type HttpsConnector = RustlsConnector<HttpConnector>;
+use hyper_rustls::HttpsConnectorBuilder;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
