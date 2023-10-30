@@ -120,11 +120,11 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &str)>> {
 }
 
 fn parse_key(key: &[u8]) -> Result<&str> {
-    from_utf8(key).map_err(|e| Error::InvalidLine(format!("malformed key: {:?}", e)))
+    from_utf8(key).map_err(|e| Error::InvalidLine(format!("malformed key: {e:?}")))
 }
 
 fn parse_value(value: &[u8]) -> Result<&str> {
-    from_utf8(value).map_err(|e| Error::InvalidLine(format!("malformed value: {:?}", e)))
+    from_utf8(value).map_err(|e| Error::InvalidLine(format!("malformed value: {e:?}")))
 }
 
 #[pin_project]
