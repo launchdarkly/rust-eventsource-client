@@ -1,0 +1,37 @@
+name: Publish Package
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Is this a dry run. If so no package will be published.'
+        type: boolean
+        required: true
+
+jobs:
+  build-publish:
+    runs-on: ubuntu-latest
+    # Needed to get tokens during publishing.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup rust tooling
+        run: |
+          rustup override set 1.68
+          rustup component add rustfmt
+
+      - uses: ./.github/actions/ci
+      - uses: ./.github/actions/build-docs
+
+      - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.0.0
+        name: 'Get crates.io token'
+        with:
+          aws_assume_role: ${{ vars.AWS_ROLE_ARN }}
+          ssm_parameter_pairs: '/production/common/releasing/cratesio/api_token = CARGO_REGISTRY_TOKEN'
+
+      - uses: ./.github/actions/publish
+        with:
+          token: ${{env.CARGO_REGISTRY_TOKEN}}
+          dry_run: ${{ inputs.dry_run }}
