@@ -1,0 +1,9 @@
+name: Build Documentation
+description: 'Build Documentation.'
+
+runs:
+  using: composite
+  steps:
+    - name: Build Documentation
+      shell: bash
+      run: cargo doc --no-deps -p eventsource-client

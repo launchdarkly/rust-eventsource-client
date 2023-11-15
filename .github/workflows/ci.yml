@@ -1,0 +1,27 @@
+name: Run CI
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md' # Do not need to run CI for markdown changes.
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+
+jobs:
+  ci-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # If you only need the current version keep this.
+
+      - name: Setup rust tooling
+        run: |
+          rustup override set 1.68
+          rustup component add rustfmt clippy
+
+      - uses: ./.github/actions/ci
+      - uses: ./.github/actions/build-docs

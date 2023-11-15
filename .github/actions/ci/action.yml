@@ -1,0 +1,29 @@
+name: CI Workflow
+description: 'Shared CI workflow.'
+
+runs:
+  using: composite
+  steps:
+    - name: Check formatting
+      shell: bash
+      run: cargo fmt --check
+
+    - name: Run tests
+      shell: bash
+      run: cargo test --all-features -p eventsource-client
+
+    - name: Run clippy checks
+      shell: bash
+      run: cargo clippy --all-features -p eventsource-client -- -D warnings
+
+    - name: Build contract tests
+      shell: bash
+      run: make build-contract-tests
+
+    - name: Start contract test service
+      shell: bash
+      run: make start-contract-test-service-bg
+
+    - name: Run contract tests
+      shell: bash
+      run: make run-contract-tests
