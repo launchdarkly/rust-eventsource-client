@@ -47,5 +47,4 @@ jobs:
       - uses: ./.github/actions/publish
         if: ${{ steps.release.outputs.releases_created }}
         with:
-          token: ${{env.CARGO_REGISTRY_TOKEN}}
           dry_run: false
