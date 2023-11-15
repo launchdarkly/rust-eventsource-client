@@ -1,3 +1,4 @@
 {
-  "eventsource-client": "0.11.0"
+  "eventsource-client": "0.11.0",
+  "contract-tests": "0.1.1"
 }
