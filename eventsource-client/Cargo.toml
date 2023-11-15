@@ -7,10 +7,7 @@ authors = ["LaunchDarkly"]
 edition = "2021"
 license = "Apache-2.0"
 keywords = ["launchdarkly", "feature-flags", "feature-toggles", "eventsource", "server-sent-events"]
-exclude = [
-    ".circleci",
-    ".ldrelease"
-]
+exclude = ["CHANGELOG.md"]
 
 [dependencies]
 futures = "0.3.21"
