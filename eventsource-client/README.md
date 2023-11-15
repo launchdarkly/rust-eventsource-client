@@ -1,5 +1,7 @@
 # eventsource-client
 
+[![Run CI](https://github.com/launchdarkly/rust-eventsource-client/actions/workflows/ci.yml/badge.svg)](https://github.com/launchdarkly/rust-eventsource-client/actions/workflows/ci.yml)
+
 Client for the [Server-Sent Events] protocol (aka [EventSource]).
 
 [Server-Sent Events]: https://html.spec.whatwg.org/multipage/server-sent-events.html
