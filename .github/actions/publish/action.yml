@@ -1,9 +1,6 @@
 name: Publish Package
 description: 'Publish the package to crates.io'
 inputs:
-  token:
-    description: 'Token to use for publishing.'
-    required: true
   dry_run:
     description: 'Is this a dry run. If so no package will be published.'
     required: true
@@ -14,4 +11,4 @@ runs:
     - name: Publish Library
       shell: bash
       if: ${{ inputs.dry_run == 'false' }}
-      run: CARGO_REGISTRY_TOKEN="${{inputs.token}}" cargo publish -p eventsource-client
+      run: cargo publish -p eventsource-client

@@ -33,5 +33,4 @@ jobs:
 
       - uses: ./.github/actions/publish
         with:
-          token: ${{env.CARGO_REGISTRY_TOKEN}}
           dry_run: ${{ inputs.dry_run }}
