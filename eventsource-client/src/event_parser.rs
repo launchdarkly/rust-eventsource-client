@@ -79,13 +79,9 @@ pub struct Event {
 }
 
 const LOGIFY_MAX_CHARS: usize = 100;
-fn logify(bytes: &[u8]) -> &str {
+fn logify(bytes: &[u8]) -> String {
     let stringified = from_utf8(bytes).unwrap_or("<bad utf8>");
-    if stringified.len() <= LOGIFY_MAX_CHARS {
-        stringified
-    } else {
-        &stringified[..LOGIFY_MAX_CHARS - 1]
-    }
+    stringified.chars().take(LOGIFY_MAX_CHARS).collect()
 }
 
 fn parse_field(line: &[u8]) -> Result<Option<(&str, &str)>> {
@@ -367,6 +363,8 @@ impl EventParser {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::{Error::*, *};
     use proptest::proptest;
     use test_case::test_case;
@@ -386,6 +384,19 @@ mod tests {
         } else {
             panic!("Event should have been received")
         }
+    }
+
+    #[test]
+    fn test_logify_handles_code_point_boundaries() {
+        let phase = String::from_str(
+            "这是一条很长的消息，最初导致我们的代码出现恐慌。我希望情况不再如此。这是一条很长的消息，最初导致我们的代码出现恐慌。我希望情况不再如此。这是一条很长的消息，最初导致我们的代码出现恐慌。我希望情况不再如此。这是一条很长的消息，最初导致我们的代码出现恐慌。我希望情况不再如此。",
+        )
+        .expect("Invalid sample string");
+
+        let input: &[u8] = phase.as_bytes();
+        let result = logify(input);
+
+        assert!(result == "这是一条很长的消息，最初导致我们的代码出现恐慌。我希望情况不再如此。这是一条很长的消息，最初导致我们的代码出现恐慌。我希望情况不再如此。这是一条很长的消息，最初导致我们的代码出现恐慌。我希望情况不再如");
     }
 
     #[test]
