@@ -2,6 +2,13 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.12.1](https://github.com/launchdarkly/rust-eventsource-client/compare/0.12.0...0.12.1) (2023-12-12)
+
+
+### Bug Fixes
+
+* logify could panic if truncating mid-code point ([#70](https://github.com/launchdarkly/rust-eventsource-client/issues/70)) ([37316c4](https://github.com/launchdarkly/rust-eventsource-client/commit/37316c4f0e8c015db118dc1d082281838e88e522))
+
 ## [0.12.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.11.0...0.12.0) (2023-11-15)
 
 
