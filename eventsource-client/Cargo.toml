@@ -11,7 +11,7 @@ exclude = ["CHANGELOG.md"]
 
 [dependencies]
 futures = "0.3.21"
-hyper = { version = "0.14.17", features = ["client", "http1", "tcp"] }
+hyper = { version = "0.14.19", features = ["client", "http1", "tcp"] }
 hyper-rustls = { version = "0.24.1", optional = true }
 log = "0.4.6"
 pin-project = "1.0.10"
