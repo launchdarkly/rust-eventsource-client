@@ -2,6 +2,13 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.12.2](https://github.com/launchdarkly/rust-eventsource-client/compare/0.12.1...0.12.2) (2023-12-20)
+
+
+### Bug Fixes
+
+* **deps:** Bump hyper to fix CVE-2022-31394 ([#72](https://github.com/launchdarkly/rust-eventsource-client/issues/72)) ([48d9555](https://github.com/launchdarkly/rust-eventsource-client/commit/48d955541dc29695a81b2535dafd7dec2fdb59d8))
+
 ## [0.12.1](https://github.com/launchdarkly/rust-eventsource-client/compare/0.12.0...0.12.1) (2023-12-12)
 
 
