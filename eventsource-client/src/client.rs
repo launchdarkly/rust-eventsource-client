@@ -403,6 +403,9 @@ where
                         Poll::Ready(Some(Ok(event)))
                     }
                     SSE::Comment(_) => Poll::Ready(Some(Ok(event))),
+                    SSE::ConnectionStart(value) => {
+                        Poll::Ready(Some(Ok(SSE::ConnectionStart(value))))
+                    }
                 };
             }
 
@@ -436,13 +439,16 @@ where
                         debug!("HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
+                            let reply = Poll::Ready(Some(Ok(SSE::ConnectionStart(
+                                resp.headers().to_owned(),
+                            ))));
                             self.as_mut().project().retry_strategy.reset(Instant::now());
                             self.as_mut().reset_redirects();
                             self.as_mut()
                                 .project()
                                 .state
                                 .set(State::Connected(resp.into_body()));
-                            continue;
+                            return reply;
                         }
 
                         if resp.status() == 301 || resp.status() == 307 {
