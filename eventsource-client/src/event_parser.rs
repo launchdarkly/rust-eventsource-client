@@ -1,6 +1,10 @@
-use std::{collections::VecDeque, convert::TryFrom, str::from_utf8};
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::TryFrom,
+    str::from_utf8,
+};
 
-use hyper::{body::Bytes, http::HeaderValue, HeaderMap};
+use hyper::body::Bytes;
 use log::{debug, log_enabled, trace};
 use pin_project::pin_project;
 
@@ -32,7 +36,7 @@ impl EventData {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum SSE {
-    Connected(HeaderMap<HeaderValue>),
+    Connected((u16, HashMap<String, String>)),
     Event(Event),
     Comment(String),
 }

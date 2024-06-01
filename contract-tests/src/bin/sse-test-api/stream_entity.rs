@@ -36,7 +36,7 @@ impl Inner {
             match stream.try_next().await {
                 Ok(Some(event)) => {
                     let event_type: EventType = event.into();
-                    if let EventType::Connected {} = event_type {
+                    if matches!(event_type, EventType::Connected { .. }) {
                         continue;
                     }
 
