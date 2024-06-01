@@ -13,6 +13,7 @@ use log::{debug, info, trace, warn};
 use pin_project::pin_project;
 use std::{
     boxed,
+    collections::HashMap,
     fmt::{self, Debug, Display, Formatter},
     future::Future,
     io::ErrorKind,
@@ -27,8 +28,8 @@ use tokio::{
     time::Sleep,
 };
 
-use crate::config::ReconnectOptions;
 use crate::error::{Error, Result};
+use crate::{config::ReconnectOptions, ResponseWrapper};
 
 use hyper::client::HttpConnector;
 use hyper_timeout::TimeoutConnector;
@@ -393,6 +394,7 @@ where
             let this = self.as_mut().project();
             if let Some(event) = this.event_parser.get_event() {
                 return match event {
+                    SSE::Connected(_) => Poll::Ready(Some(Ok(event))),
                     SSE::Event(ref evt) => {
                         *this.last_event_id = evt.id.clone();
 
@@ -437,15 +439,27 @@ where
                         debug!("HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
-                            let reply =
-                                Poll::Ready(Some(Ok(SSE::Connected(resp.headers().to_owned()))));
                             self.as_mut().project().retry_strategy.reset(Instant::now());
                             self.as_mut().reset_redirects();
+
+                            let headers = resp.headers();
+                            let mut map = HashMap::new();
+                            for (key, value) in headers.iter() {
+                                let key = key.to_string();
+                                let value = match value.to_str() {
+                                    Ok(value) => value.to_string(),
+                                    Err(_) => String::from(""),
+                                };
+                                map.insert(key, value);
+                            }
+                            let status = resp.status().as_u16();
+
                             self.as_mut()
                                 .project()
                                 .state
                                 .set(State::Connected(resp.into_body()));
-                            return reply;
+
+                            return Poll::Ready(Some(Ok(SSE::Connected((status, map)))));
                         }
 
                         if resp.status() == 301 || resp.status() == 307 {
@@ -470,7 +484,10 @@ where
 
                         self.as_mut().reset_redirects();
                         self.as_mut().project().state.set(State::New);
-                        return Poll::Ready(Some(Err(Error::UnexpectedResponse(resp.status()))));
+
+                        return Poll::Ready(Some(Err(Error::UnexpectedResponse(
+                            ResponseWrapper::new(resp),
+                        ))));
                     }
                     Err(e) => {
                         // This seems basically impossible. AFAIK we can only get this way if we
