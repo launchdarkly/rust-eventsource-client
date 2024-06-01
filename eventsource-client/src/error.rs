@@ -1,4 +1,4 @@
-use hyper::StatusCode;
+use hyper::{Body, Response};
 
 /// Error type returned from this library's functions.
 #[derive(Debug)]
@@ -8,7 +8,7 @@ pub enum Error {
     /// An invalid request parameter
     InvalidParameter(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The HTTP response could not be handled.
-    UnexpectedResponse(StatusCode),
+    UnexpectedResponse(Response<Body>),
     /// An error reading from the HTTP response body.
     HttpStream(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The HTTP response stream ended
@@ -32,7 +32,10 @@ impl std::fmt::Display for Error {
             TimedOut => write!(f, "timed out"),
             StreamClosed => write!(f, "stream closed"),
             InvalidParameter(err) => write!(f, "invalid parameter: {err}"),
-            UnexpectedResponse(status_code) => write!(f, "unexpected response: {status_code}"),
+            UnexpectedResponse(resp) => {
+                let status = resp.status();
+                write!(f, "unexpected response: {status}")
+            }
             HttpStream(err) => write!(f, "http error: {err}"),
             Eof => write!(f, "eof"),
             UnexpectedEof => write!(f, "unexpected eof"),

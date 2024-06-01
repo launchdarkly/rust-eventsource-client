@@ -467,7 +467,7 @@ where
 
                         self.as_mut().reset_redirects();
                         self.as_mut().project().state.set(State::New);
-                        return Poll::Ready(Some(Err(Error::UnexpectedResponse(resp.status()))));
+                        return Poll::Ready(Some(Err(Error::UnexpectedResponse(resp))));
                     }
                     Err(e) => {
                         // This seems basically impossible. AFAIK we can only get this way if we
