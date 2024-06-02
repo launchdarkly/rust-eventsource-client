@@ -8,8 +8,8 @@ impl ResponseWrapper {
     pub fn new(response: Response<Body>) -> Self {
         Self { response }
     }
-    pub fn status(&self) -> hyper::http::StatusCode {
-        self.response.status()
+    pub fn status(&self) -> u16 {
+        self.response.status().as_u16()
     }
 
     pub async fn body_bytes(self) -> Result<Vec<u8>> {
