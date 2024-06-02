@@ -1,4 +1,36 @@
-use hyper::{Body, Response};
+use hyper::{body::Buf, Body, Response};
+
+pub struct ResponseWrapper {
+    response: Response<Body>,
+}
+
+impl ResponseWrapper {
+    pub fn new(response: Response<Body>) -> Self {
+        Self { response }
+    }
+    pub fn status(&self) -> hyper::http::StatusCode {
+        self.response.status()
+    }
+
+    pub async fn body_bytes(self) -> Result<Vec<u8>> {
+        let body = self.response.into_body();
+
+        let buf = match hyper::body::aggregate(body).await {
+            Ok(buf) => buf,
+            Err(err) => return Err(Error::HttpStream(Box::new(err))),
+        };
+
+        Ok(buf.chunk().to_vec())
+    }
+}
+
+impl std::fmt::Debug for ResponseWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResponseWrapper")
+            .field("status", &self.status())
+            .finish()
+    }
+}
 
 /// Error type returned from this library's functions.
 #[derive(Debug)]
@@ -8,7 +40,7 @@ pub enum Error {
     /// An invalid request parameter
     InvalidParameter(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The HTTP response could not be handled.
-    UnexpectedResponse(Response<Body>),
+    UnexpectedResponse(ResponseWrapper),
     /// An error reading from the HTTP response body.
     HttpStream(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The HTTP response stream ended
@@ -32,8 +64,8 @@ impl std::fmt::Display for Error {
             TimedOut => write!(f, "timed out"),
             StreamClosed => write!(f, "stream closed"),
             InvalidParameter(err) => write!(f, "invalid parameter: {err}"),
-            UnexpectedResponse(resp) => {
-                let status = resp.status();
+            UnexpectedResponse(r) => {
+                let status = r.status();
                 write!(f, "unexpected response: {status}")
             }
             HttpStream(err) => write!(f, "http error: {err}"),

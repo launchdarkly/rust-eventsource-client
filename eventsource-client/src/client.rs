@@ -27,8 +27,8 @@ use tokio::{
     time::Sleep,
 };
 
-use crate::config::ReconnectOptions;
 use crate::error::{Error, Result};
+use crate::{config::ReconnectOptions, ResponseWrapper};
 
 use hyper::client::HttpConnector;
 use hyper_timeout::TimeoutConnector;
@@ -467,7 +467,10 @@ where
 
                         self.as_mut().reset_redirects();
                         self.as_mut().project().state.set(State::New);
-                        return Poll::Ready(Some(Err(Error::UnexpectedResponse(resp))));
+
+                        return Poll::Ready(Some(Err(Error::UnexpectedResponse(
+                            ResponseWrapper::new(resp),
+                        ))));
                     }
                     Err(e) => {
                         // This seems basically impossible. AFAIK we can only get this way if we
