@@ -13,14 +13,14 @@ impl ResponseWrapper {
     pub fn status(&self) -> u16 {
         self.response.status().as_u16()
     }
-    pub fn headers(&self) -> Result<HashMap<&str, &str>> {
+    pub fn headers(&self) -> std::result::Result<HashMap<&str, &str>, HeaderError> {
         let headers = self.response.headers();
         let mut map = HashMap::new();
         for (key, value) in headers.iter() {
             let key = key.as_str();
             let value = match value.to_str() {
                 Ok(value) => value,
-                Err(err) => return Err(Error::InvalidResponseHeader(Box::new(err))),
+                Err(err) => return Err(HeaderError::new(Box::new(err))),
             };
             map.insert(key, value);
         }
@@ -47,6 +47,32 @@ impl std::fmt::Debug for ResponseWrapper {
     }
 }
 
+/// Error type for invalid response headers encountered in ResponseWrapper.
+#[derive(Debug)]
+pub struct HeaderError {
+    /// Wrapped inner error providing details about the header issue.
+    inner_error: Box<dyn std::error::Error + Send + Sync + 'static>,
+}
+
+impl HeaderError {
+    /// Constructs a new `HeaderError` wrapping an existing error.
+    pub fn new(err: Box<dyn std::error::Error + Send + Sync + 'static>) -> Self {
+        HeaderError { inner_error: err }
+    }
+}
+
+impl std::fmt::Display for HeaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Invalid response header: {}", self.inner_error)
+    }
+}
+
+impl std::error::Error for HeaderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.inner_error.as_ref())
+    }
+}
+
 /// Error type returned from this library's functions.
 #[derive(Debug)]
 pub enum Error {
@@ -70,8 +96,6 @@ pub enum Error {
     MalformedLocationHeader(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// Reached maximum redirect limit after encountering Location headers.
     MaxRedirectLimitReached(u32),
-    // Invalid response header.
-    InvalidResponseHeader(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl std::fmt::Display for Error {
@@ -92,7 +116,6 @@ impl std::fmt::Display for Error {
             InvalidEvent => write!(f, "invalid event"),
             MalformedLocationHeader(err) => write!(f, "malformed header: {err}"),
             MaxRedirectLimitReached(limit) => write!(f, "maximum redirect limit reached: {limit}"),
-            InvalidResponseHeader(err) => write!(f, "invalid response header: {err}"),
         }
     }
 }
