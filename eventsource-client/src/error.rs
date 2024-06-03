@@ -11,6 +11,9 @@ impl ResponseWrapper {
     pub fn status(&self) -> u16 {
         self.response.status().as_u16()
     }
+    pub fn headers(&self) -> &hyper::header::HeaderMap {
+        self.response.headers()
+    }
 
     pub async fn body_bytes(self) -> Result<Vec<u8>> {
         let body = self.response.into_body();
