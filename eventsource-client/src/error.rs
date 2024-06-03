@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use hyper::{body::Buf, Body, Response};
 
 pub struct ResponseWrapper {
@@ -11,8 +13,18 @@ impl ResponseWrapper {
     pub fn status(&self) -> u16 {
         self.response.status().as_u16()
     }
-    pub fn headers(&self) -> &hyper::header::HeaderMap {
-        self.response.headers()
+    pub fn headers(&self) -> Result<HashMap<&str, &str>> {
+        let headers = self.response.headers();
+        let mut map = HashMap::new();
+        for (key, value) in headers.iter() {
+            let key = key.as_str();
+            let value = match value.to_str() {
+                Ok(value) => value,
+                Err(err) => return Err(Error::InvalidParameter(Box::new(err))),
+            };
+            map.insert(key, value);
+        }
+        Ok(map)
     }
 
     pub async fn body_bytes(self) -> Result<Vec<u8>> {
