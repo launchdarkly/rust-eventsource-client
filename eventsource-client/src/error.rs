@@ -20,7 +20,7 @@ impl ResponseWrapper {
             let key = key.as_str();
             let value = match value.to_str() {
                 Ok(value) => value,
-                Err(err) => return Err(Error::InvalidParameter(Box::new(err))),
+                Err(err) => return Err(Error::InvalidResponseHeader(Box::new(err))),
             };
             map.insert(key, value);
         }
@@ -70,6 +70,8 @@ pub enum Error {
     MalformedLocationHeader(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// Reached maximum redirect limit after encountering Location headers.
     MaxRedirectLimitReached(u32),
+    // Invalid response header.
+    InvalidResponseHeader(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl std::fmt::Display for Error {
@@ -90,6 +92,7 @@ impl std::fmt::Display for Error {
             InvalidEvent => write!(f, "invalid event"),
             MalformedLocationHeader(err) => write!(f, "malformed header: {err}"),
             MaxRedirectLimitReached(limit) => write!(f, "maximum redirect limit reached: {limit}"),
+            InvalidResponseHeader(err) => write!(f, "invalid response header: {err}"),
         }
     }
 }
