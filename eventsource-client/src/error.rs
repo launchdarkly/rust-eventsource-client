@@ -47,6 +47,32 @@ impl std::fmt::Debug for ResponseWrapper {
     }
 }
 
+/// Error type for invalid response headers encountered in ResponseWrapper.
+#[derive(Debug)]
+pub struct HeaderError {
+    /// Wrapped inner error providing details about the header issue.
+    inner_error: Box<dyn std::error::Error + Send + Sync + 'static>,
+}
+
+impl HeaderError {
+    /// Constructs a new `HeaderError` wrapping an existing error.
+    pub fn new(err: Box<dyn std::error::Error + Send + Sync + 'static>) -> Self {
+        HeaderError { inner_error: err }
+    }
+}
+
+impl std::fmt::Display for HeaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Invalid response header: {}", self.inner_error)
+    }
+}
+
+impl std::error::Error for HeaderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.inner_error.as_ref())
+    }
+}
+
 /// Error type returned from this library's functions.
 #[derive(Debug)]
 pub enum Error {
@@ -125,29 +151,3 @@ impl Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-/// Error type for invalid response headers encountered in ResponseWrapper.
-#[derive(Debug)]
-pub struct HeaderError {
-    /// Wrapped inner error providing details about the header issue.
-    inner_error: Box<dyn std::error::Error + Send + Sync + 'static>,
-}
-
-impl HeaderError {
-    /// Constructs a new `HeaderError` wrapping an existing error.
-    pub fn new(err: Box<dyn std::error::Error + Send + Sync + 'static>) -> Self {
-        HeaderError { inner_error: err }
-    }
-}
-
-impl std::fmt::Display for HeaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Invalid response header: {}", self.inner_error)
-    }
-}
-
-impl std::error::Error for HeaderError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.inner_error.as_ref())
-    }
-}
