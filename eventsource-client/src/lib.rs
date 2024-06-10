@@ -14,7 +14,8 @@
 //! let mut stream = Box::pin(client.stream())
 //!     .map_ok(|event| match event {
 //!         SSE::Comment(comment) => println!("got a comment event: {:?}", comment),
-//!         SSE::Event(evt) => println!("got an event: {}", evt.event_type)
+//!         SSE::Event(evt) => println!("got an event: {}", evt.event_type),
+//!         SSE::Connected(_) => println!("got connected")
 //!     })
 //!     .map_err(|e| println!("error streaming events: {:?}", e));
 //! # while let Ok(Some(_)) = stream.try_next().await {}

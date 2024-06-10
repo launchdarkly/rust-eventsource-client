@@ -1,4 +1,8 @@
-use std::{collections::VecDeque, convert::TryFrom, str::from_utf8};
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::TryFrom,
+    str::from_utf8,
+};
 
 use hyper::body::Bytes;
 use log::{debug, log_enabled, trace};
@@ -32,6 +36,7 @@ impl EventData {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum SSE {
+    Connected((u16, HashMap<String, String>)),
     Event(Event),
     Comment(String),
 }
