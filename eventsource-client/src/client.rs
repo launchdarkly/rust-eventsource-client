@@ -13,6 +13,7 @@ use log::{debug, info, trace, warn};
 use pin_project::pin_project;
 use std::{
     boxed,
+    collections::HashMap,
     fmt::{self, Debug, Display, Formatter},
     future::Future,
     io::ErrorKind,
@@ -393,6 +394,7 @@ where
             let this = self.as_mut().project();
             if let Some(event) = this.event_parser.get_event() {
                 return match event {
+                    SSE::Connected(_) => Poll::Ready(Some(Ok(event))),
                     SSE::Event(ref evt) => {
                         *this.last_event_id = evt.id.clone();
 
@@ -438,11 +440,25 @@ where
                         if resp.status().is_success() {
                             self.as_mut().project().retry_strategy.reset(Instant::now());
                             self.as_mut().reset_redirects();
+
+                            let headers = resp.headers();
+                            let mut map = HashMap::new();
+                            for (key, value) in headers.iter() {
+                                let key = key.to_string();
+                                let value = match value.to_str() {
+                                    Ok(value) => value.to_string(),
+                                    Err(_) => String::from(""),
+                                };
+                                map.insert(key, value);
+                            }
+                            let status = resp.status().as_u16();
+
                             self.as_mut()
                                 .project()
                                 .state
                                 .set(State::Connected(resp.into_body()));
-                            continue;
+
+                            return Poll::Ready(Some(Ok(SSE::Connected((status, map)))));
                         }
 
                         if resp.status() == 301 || resp.status() == 307 {
