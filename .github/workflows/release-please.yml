@@ -28,7 +28,7 @@ jobs:
       - name: Setup rust tooling
         if: ${{ steps.release.outputs.releases_created }}
         run: |
-          rustup override set 1.68
+          rustup override set 1.72
           rustup component add rustfmt clippy
 
       - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.0.0
