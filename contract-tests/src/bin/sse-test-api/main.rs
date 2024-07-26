@@ -50,25 +50,16 @@ struct Config {
 #[derive(Serialize, Debug)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum EventType {
-    Connected {
-        status: u16,
-        headers: HashMap<String, String>,
-    },
-    Event {
-        event: Event,
-    },
-    Comment {
-        comment: String,
-    },
-    Error {
-        error: String,
-    },
+    Connected {},
+    Event { event: Event },
+    Comment { comment: String },
+    Error { error: String },
 }
 
 impl From<es::SSE> for EventType {
     fn from(event: es::SSE) -> Self {
         match event {
-            es::SSE::Connected((status, headers)) => Self::Connected { status, headers },
+            es::SSE::Connected(_) => Self::Connected {},
             es::SSE::Event(evt) => Self::Event {
                 event: Event {
                     event_type: evt.event_type,

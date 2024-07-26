@@ -40,17 +40,14 @@ fn tail_events(client: impl es::Client) -> impl Stream<Item = Result<(), ()>> {
     client
         .stream()
         .map_ok(|event| match event {
-            es::SSE::Connected((status, _)) => {
-                println!("got connected: \nstatus={}", status)
+            es::SSE::Connected(connection) => {
+                println!("got connected: \nstatus={}", connection.response().status())
             }
             es::SSE::Event(ev) => {
                 println!("got an event: {}\n{}", ev.event_type, ev.data)
             }
             es::SSE::Comment(comment) => {
                 println!("got a comment: \n{}", comment)
-            }
-            es::SSE::Connected(headers) => {
-                println!("got a connection start with headers: \n{:?}", headers)
             }
         })
         .map_err(|err| eprintln!("error streaming events: {:?}", err))
