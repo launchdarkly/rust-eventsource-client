@@ -1,12 +1,10 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    convert::TryFrom,
-    str::from_utf8,
-};
+use std::{collections::VecDeque, convert::TryFrom, str::from_utf8};
 
 use hyper::body::Bytes;
 use log::{debug, log_enabled, trace};
 use pin_project::pin_project;
+
+use crate::response::Response;
 
 use super::error::{Error, Result};
 
@@ -36,7 +34,7 @@ impl EventData {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum SSE {
-    Connected((u16, HashMap<String, String>)),
+    Connected(ConnectionDetails),
     Event(Event),
     Comment(String),
 }
@@ -72,6 +70,22 @@ impl TryFrom<EventData> for Option<SSE> {
             id,
             retry,
         })))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConnectionDetails {
+    response: Response,
+}
+
+impl ConnectionDetails {
+    pub(crate) fn new(response: Response) -> Self {
+        Self { response }
+    }
+
+    /// Returns information describing the response at the time of connection.
+    pub fn response(&self) -> &Response {
+        &self.response
     }
 }
 
@@ -235,7 +249,7 @@ impl EventParser {
                             self.last_event_id = Some(value.to_string());
                         }
 
-                        event_data.id = self.last_event_id.clone()
+                        event_data.id.clone_from(&self.last_event_id)
                     } else if key == "retry" {
                         match value.parse::<u64>() {
                             Ok(retry) => {

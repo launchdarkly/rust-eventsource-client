@@ -31,6 +31,7 @@ mod client;
 mod config;
 mod error;
 mod event_parser;
+mod response;
 mod retry;
 
 pub use client::*;
@@ -38,3 +39,4 @@ pub use config::*;
 pub use error::*;
 pub use event_parser::Event;
 pub use event_parser::SSE;
+pub use response::Response;

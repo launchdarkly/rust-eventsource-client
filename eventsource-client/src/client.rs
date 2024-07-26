@@ -7,14 +7,13 @@ use hyper::{
     },
     header::{HeaderMap, HeaderName, HeaderValue},
     service::Service,
-    Body, Request, StatusCode, Uri,
+    Body, Request, Uri,
 };
 use log::{debug, info, trace, warn};
 use pin_project::pin_project;
 use std::{
     boxed,
-    collections::HashMap,
-    fmt::{self, Debug, Display, Formatter},
+    fmt::{self, Debug, Formatter},
     future::Future,
     io::ErrorKind,
     pin::Pin,
@@ -28,8 +27,14 @@ use tokio::{
     time::Sleep,
 };
 
-use crate::error::{Error, Result};
-use crate::{config::ReconnectOptions, ResponseWrapper};
+use crate::{
+    config::ReconnectOptions,
+    response::{ErrorBody, Response},
+};
+use crate::{
+    error::{Error, Result},
+    event_parser::ConnectionDetails,
+};
 
 use hyper::client::HttpConnector;
 use hyper_timeout::TimeoutConnector;
@@ -396,7 +401,7 @@ where
                 return match event {
                     SSE::Connected(_) => Poll::Ready(Some(Ok(event))),
                     SSE::Event(ref evt) => {
-                        *this.last_event_id = evt.id.clone();
+                        this.last_event_id.clone_from(&evt.id);
 
                         if let Some(retry) = evt.retry {
                             this.retry_strategy
@@ -405,7 +410,6 @@ where
                         Poll::Ready(Some(Ok(event)))
                     }
                     SSE::Comment(_) => Poll::Ready(Some(Ok(event))),
-                    SSE::Connected(_) => Poll::Ready(Some(Ok(event))),
                 };
             }
 
@@ -442,24 +446,17 @@ where
                             self.as_mut().project().retry_strategy.reset(Instant::now());
                             self.as_mut().reset_redirects();
 
-                            let headers = resp.headers();
-                            let mut map = HashMap::new();
-                            for (key, value) in headers.iter() {
-                                let key = key.to_string();
-                                let value = match value.to_str() {
-                                    Ok(value) => value.to_string(),
-                                    Err(_) => String::from(""),
-                                };
-                                map.insert(key, value);
-                            }
-                            let status = resp.status().as_u16();
+                            let status = resp.status();
+                            let headers = resp.headers().clone();
 
                             self.as_mut()
                                 .project()
                                 .state
                                 .set(State::Connected(resp.into_body()));
 
-                            return Poll::Ready(Some(Ok(SSE::Connected((status, map)))));
+                            return Poll::Ready(Some(Ok(SSE::Connected(ConnectionDetails::new(
+                                Response::new(status, headers),
+                            )))));
                         }
 
                         if resp.status() == 301 || resp.status() == 307 {
@@ -486,7 +483,8 @@ where
                         self.as_mut().project().state.set(State::New);
 
                         return Poll::Ready(Some(Err(Error::UnexpectedResponse(
-                            ResponseWrapper::new(resp),
+                            Response::new(resp.status(), resp.headers().clone()),
+                            ErrorBody::new(resp.into_body()),
                         ))));
                     }
                     Err(e) => {
