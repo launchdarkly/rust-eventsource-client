@@ -2,6 +2,14 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.13.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.12.2...0.13.0) (2024-07-30)
+
+
+### Features
+
+* Emit `SSE::Connected` event when stream is established ([#79](https://github.com/launchdarkly/rust-eventsource-client/issues/79)) ([791faf4](https://github.com/launchdarkly/rust-eventsource-client/commit/791faf4f2cda2165cf9df50a181344979d43429c))
+* Update `Error::UnexpectedResponse` to include failed connection details ([#79](https://github.com/launchdarkly/rust-eventsource-client/issues/79)) ([791faf4](https://github.com/launchdarkly/rust-eventsource-client/commit/791faf4f2cda2165cf9df50a181344979d43429c))
+
 ## [0.12.2](https://github.com/launchdarkly/rust-eventsource-client/compare/0.12.1...0.12.2) (2023-12-20)
 
 
