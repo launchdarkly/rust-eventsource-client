@@ -31,7 +31,7 @@ jobs:
           rustup override set 1.72
           rustup component add rustfmt clippy
 
-      - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.0.0
+      - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.2.0
         name: 'Get crates.io token'
         if: ${{ steps.release.outputs.releases_created }}
         with:
