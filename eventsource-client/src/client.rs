@@ -1,3 +1,5 @@
+use base64::prelude::*;
+
 use futures::{ready, Stream};
 use hyper::{
     body::HttpBody,
@@ -131,6 +133,15 @@ impl ClientBuilder {
 
         self.headers.insert(name, value);
         Ok(self)
+    }
+
+    /// Set the Authorization header with the calculated basic authentication value.
+    pub fn basic_auth(self, username: &str, password: &str) -> Result<ClientBuilder> {
+        let auth = format!("{}:{}", username, password);
+        let encoded = BASE64_STANDARD.encode(auth);
+        let value = format!("Basic {}", encoded);
+
+        self.header("Authorization", &value)
     }
 
     /// Set a read timeout for the underlying connection. There is no read timeout by default.
@@ -598,4 +609,34 @@ mod private {
 
     pub trait Sealed {}
     impl<C> Sealed for ClientImpl<C> {}
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ClientBuilder;
+    use hyper::http::HeaderValue;
+    use test_case::test_case;
+
+    #[test_case("user", "pass", "dXNlcjpwYXNz")]
+    #[test_case("user1", "password123", "dXNlcjE6cGFzc3dvcmQxMjM=")]
+    #[test_case("user2", "", "dXNlcjI6")]
+    #[test_case("user@name", "pass#word!", "dXNlckBuYW1lOnBhc3Mjd29yZCE=")]
+    #[test_case("user3", "my pass", "dXNlcjM6bXkgcGFzcw==")]
+    #[test_case(
+        "weird@-/:stuff",
+        "goes@-/:here",
+        "d2VpcmRALS86c3R1ZmY6Z29lc0AtLzpoZXJl"
+    )]
+    fn basic_auth_generates_correct_headers(username: &str, password: &str, expected: &str) {
+        let builder = ClientBuilder::for_url("http://example.com")
+            .expect("failed to build client")
+            .basic_auth(username, password)
+            .expect("failed to add authentication");
+
+        let actual = builder.headers.get("Authorization");
+        let expected = HeaderValue::from_str(format!("Basic {}", expected).as_str())
+            .expect("unable to create expected header");
+
+        assert_eq!(Some(&expected), actual);
+    }
 }
