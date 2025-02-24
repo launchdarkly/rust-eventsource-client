@@ -2,6 +2,13 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.14.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.13.0...0.14.0) (2025-02-24)
+
+
+### Features
+
+* Add `basic_auth` method to `ClientBuilder` ([#88](https://github.com/launchdarkly/rust-eventsource-client/issues/88)) ([526b03f](https://github.com/launchdarkly/rust-eventsource-client/commit/526b03ffeb5b0ce7f42c531b1b579e2f9a4e9662))
+
 ## [0.13.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.12.2...0.13.0) (2024-07-30)
 
 
