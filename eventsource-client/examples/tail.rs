@@ -26,8 +26,12 @@ async fn main() -> Result<(), es::Error> {
                 .backoff_factor(2)
                 .delay_max(Duration::from_secs(60))
                 .build(),
-        )
-        .build();
+        );
+    #[cfg(feature = "rustls")]
+    let client = client.build();
+
+    #[cfg(feature = "native-tls")]
+    let client = client.build_http(); 
 
     let mut stream = tail_events(client);
 
