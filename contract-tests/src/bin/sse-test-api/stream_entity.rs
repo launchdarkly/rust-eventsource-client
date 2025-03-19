@@ -67,7 +67,7 @@ impl Inner {
         let json = match serde_json::to_string(&event_type) {
             Ok(s) => s,
             Err(e) => {
-                error!("Failed to json encode event type {:?}", e);
+                error!(target: "ldeventsource::contract-tests", "Failed to json encode event type {:?}", e);
                 return false;
             }
         };
@@ -87,7 +87,7 @@ impl Inner {
                 *counter = counter_val + 1
             }
             Err(e) => {
-                error!("Failed to send post back to test harness {:?}", e);
+                error!(target: "ldeventsource::contract-tests", "Failed to send post back to test harness {:?}", e);
                 return false;
             }
         };

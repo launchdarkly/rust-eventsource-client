@@ -113,7 +113,7 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &str)>> {
     match line.iter().position(|&b| b':' == b) {
         Some(0) => {
             let value = &line[1..];
-            debug!("comment: {}", logify(value));
+            debug!(target: "ldeventsource", "comment: {}", logify(value));
             Ok(Some(("comment", parse_value(value)?)))
         }
         Some(colon_pos) => {
@@ -126,7 +126,7 @@ fn parse_field(line: &[u8]) -> Result<Option<(&str, &str)>> {
                 value = &value[1..];
             }
 
-            debug!("key: {}, value: {}", key, logify(value));
+            debug!(target: "ldeventsource", "key: {}, value: {}", key, logify(value));
 
             Ok(Some((key, parse_value(value)?)))
         }
@@ -186,7 +186,7 @@ impl EventParser {
     }
 
     pub fn process_bytes(&mut self, bytes: Bytes) -> Result<()> {
-        trace!("Parsing bytes {:?}", bytes);
+        trace!(target: "ldeventsource", "Parsing bytes {:?}", bytes);
         // We get bytes from the underlying stream in chunks.  Decoding a chunk has two phases:
         // decode the chunk into lines, and decode the lines into events.
         //
@@ -239,7 +239,7 @@ impl EventParser {
                         // If id contains a null byte, it is a non-fatal error and the rest of
                         // the event should be parsed if possible.
                         if value.chars().any(|c| c == '\0') {
-                            debug!("Ignoring event ID containing null byte");
+                            debug!(target: "ldeventsource", "Ignoring event ID containing null byte");
                             continue;
                         }
 
@@ -255,7 +255,9 @@ impl EventParser {
                             Ok(retry) => {
                                 event_data.retry = Some(retry);
                             }
-                            _ => debug!("Failed to parse {:?} into retry value", value),
+                            _ => {
+                                debug!(target: "ldeventsource", "Failed to parse {:?} into retry value", value)
+                            }
                         };
                     }
                 }
@@ -265,6 +267,7 @@ impl EventParser {
                 let event_data = self.event_data.take();
 
                 trace!(
+                    target: "ldeventsource",
                     "seen empty line, event_data is {:?})",
                     event_data.as_ref().map(|event_data| &event_data.event_type)
                 );
@@ -279,7 +282,7 @@ impl EventParser {
 
                 continue;
             } else {
-                trace!("processed all complete lines but event_data not yet complete");
+                trace!(target: "ldeventsource", "processed all complete lines but event_data not yet complete");
             }
 
             break;
@@ -301,6 +304,7 @@ impl EventParser {
         if let Some(incomplete_line) = self.incomplete_line.as_mut() {
             if let Some(line) = lines.next() {
                 trace!(
+                    target: "ldeventsource",
                     "extending line from previous chunk: {:?}+{:?}",
                     logify(incomplete_line),
                     logify(line)
@@ -333,6 +337,7 @@ impl EventParser {
             if let Some(actually_complete_line) = self.incomplete_line.take() {
                 // we saw the next line, so the previous one must have been complete after all
                 trace!(
+                    target: "ldeventsource",
                     "previous line was complete: {:?}",
                     logify(&actually_complete_line)
                 );
@@ -357,24 +362,24 @@ impl EventParser {
                     .push_back(line[..line.len() - 1].to_vec());
             } else if line.is_empty() {
                 // this is the last line and it's empty, no need to buffer it
-                trace!("chunk ended with a line terminator");
+                trace!(target: "ldeventsource", "chunk ended with a line terminator");
             } else if lines.peek().is_some() {
                 // this line isn't the last and we know from previous checks it doesn't end in a
                 // terminator, so we can consider it complete
                 self.complete_lines.push_back(line.to_vec());
             } else {
                 // last line needs to be buffered as it may be incomplete
-                trace!("buffering incomplete line: {:?}", logify(line));
+                trace!(target: "ldeventsource", "buffering incomplete line: {:?}", logify(line));
                 self.incomplete_line = Some(line.to_vec());
             }
         }
 
         if log_enabled!(log::Level::Trace) {
             for line in &self.complete_lines {
-                trace!("complete line: {:?}", logify(line));
+                trace!(target: "ldeventsource", "complete line: {:?}", logify(line));
             }
             if let Some(line) = &self.incomplete_line {
-                trace!("incomplete line: {:?}", logify(line));
+                trace!(target: "ldeventsource", "incomplete line: {:?}", logify(line));
             }
         }
     }

@@ -404,7 +404,7 @@ where
     type Item = Result<SSE>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        trace!("ReconnectingRequest::poll({:?})", &self.state);
+        trace!(target: "ldeventsource", "ReconnectingRequest::poll({:?})", &self.state);
 
         loop {
             let this = self.as_mut().project();
@@ -424,7 +424,7 @@ where
                 };
             }
 
-            trace!("ReconnectingRequest::poll loop({:?})", &this.state);
+            trace!(target: "ldeventsource", "ReconnectingRequest::poll loop({:?})", &this.state);
 
             let state = this.state.project();
             match state {
@@ -451,7 +451,7 @@ where
                 }
                 StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
                     Ok(resp) => {
-                        debug!("HTTP response: {:#?}", resp);
+                        debug!(target: "ldeventsource", "HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
                             self.as_mut().project().retry_strategy.reset(Instant::now());
@@ -471,17 +471,17 @@ where
                         }
 
                         if resp.status() == 301 || resp.status() == 307 {
-                            debug!("got redirected ({})", resp.status());
+                            debug!(target: "ldeventsource", "got redirected ({})", resp.status());
 
                             if self.as_mut().increment_redirect_counter() {
-                                debug!("following redirect {}", self.redirect_count);
+                                debug!(target: "ldeventsource", "following redirect {}", self.redirect_count);
 
                                 self.as_mut().project().state.set(State::FollowingRedirect(
                                     resp.headers().get(hyper::header::LOCATION).cloned(),
                                 ));
                                 continue;
                             } else {
-                                debug!("redirect limit reached ({})", self.props.max_redirects);
+                                debug!(target: "ldeventsource", "redirect limit reached ({})", self.props.max_redirects);
 
                                 self.as_mut().project().state.set(State::StreamClosed);
                                 return Poll::Ready(Some(Err(Error::MaxRedirectLimitReached(
@@ -501,7 +501,7 @@ where
                     Err(e) => {
                         // This seems basically impossible. AFAIK we can only get this way if we
                         // poll after it was already ready
-                        warn!("request returned an error: {}", e);
+                        warn!(target: "ldeventsource", "request returned an error: {}", e);
                         if !*retry {
                             self.as_mut().project().state.set(State::New);
                             return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
@@ -574,7 +574,7 @@ where
                 },
                 StateProj::WaitingToReconnect(delay) => {
                     ready!(delay.poll(cx));
-                    info!("Reconnecting");
+                    info!(target: "ldeventsource", "Reconnecting");
                     self.as_mut().project().state.set(State::New);
                 }
             };
@@ -600,7 +600,7 @@ fn uri_from_header(maybe_header: &Option<HeaderValue>) -> Result<Uri> {
 }
 
 fn delay(dur: Duration, description: &str) -> Sleep {
-    info!("Waiting {:?} before {}", dur, description);
+    info!(target: "ldeventsource", "Waiting {:?} before {}", dur, description);
     tokio::time::sleep(dur)
 }
 
