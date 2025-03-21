@@ -347,11 +347,11 @@ impl EventParser {
             }
 
             self.last_char_was_cr = false;
-            if line.ends_with(&[b'\r']) {
+            if line.ends_with(b"\r") {
                 self.complete_lines
                     .push_back(line[..line.len() - 1].to_vec());
                 self.last_char_was_cr = true;
-            } else if line.ends_with(&[b'\n']) {
+            } else if line.ends_with(b"\n") {
                 // self isn't a continuation, but rather a line ending with a LF terminator.
                 self.complete_lines
                     .push_back(line[..line.len() - 1].to_vec());
