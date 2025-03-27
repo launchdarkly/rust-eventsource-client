@@ -75,7 +75,9 @@ pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
+    connect_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
+    write_timeout: Option<Duration>,
     last_event_id: Option<String>,
     method: String,
     body: Option<String>,
@@ -97,7 +99,9 @@ impl ClientBuilder {
             url,
             headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
+            connect_timeout: None,
             read_timeout: None,
+            write_timeout: None,
             last_event_id: None,
             method: String::from("GET"),
             max_redirects: None,
@@ -144,9 +148,22 @@ impl ClientBuilder {
         self.header("Authorization", &value)
     }
 
+    /// Set a connect timeout for the underlying connection. There is no connect timeout by
+    /// default.
+    pub fn connect_timeout(mut self, connect_timeout: Duration) -> ClientBuilder {
+        self.connect_timeout = Some(connect_timeout);
+        self
+    }
+
     /// Set a read timeout for the underlying connection. There is no read timeout by default.
     pub fn read_timeout(mut self, read_timeout: Duration) -> ClientBuilder {
         self.read_timeout = Some(read_timeout);
+        self
+    }
+
+    /// Set a write timeout for the underlying connection. There is no write timeout by default.
+    pub fn write_timeout(mut self, write_timeout: Duration) -> ClientBuilder {
+        self.write_timeout = Some(write_timeout);
         self
     }
 
@@ -176,7 +193,9 @@ impl ClientBuilder {
         C::Error: Into<BoxError>,
     {
         let mut connector = TimeoutConnector::new(conn);
+        connector.set_connect_timeout(self.connect_timeout);
         connector.set_read_timeout(self.read_timeout);
+        connector.set_write_timeout(self.write_timeout);
 
         let client = hyper::Client::builder().build::<_, hyper::Body>(connector);
 
