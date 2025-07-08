@@ -24,15 +24,15 @@ jobs:
       - name: Setup rust tooling
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
         run: |
-          rustup override set 1.81
+          rustup override set 1.82
           rustup component add rustfmt clippy
 
       - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.2.0
-        name: 'Get crates.io token'
+        name: "Get crates.io token"
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
         with:
           aws_assume_role: ${{ vars.AWS_ROLE_ARN }}
-          ssm_parameter_pairs: '/production/common/releasing/cratesio/api_token = CARGO_REGISTRY_TOKEN'
+          ssm_parameter_pairs: "/production/common/releasing/cratesio/api_token = CARGO_REGISTRY_TOKEN"
 
       - uses: ./.github/actions/ci
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
