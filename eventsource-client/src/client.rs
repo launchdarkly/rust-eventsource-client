@@ -337,6 +337,8 @@ pub struct ReconnectingRequest<C> {
     redirect_count: u32,
     event_parser: EventParser,
     last_event_id: Option<String>,
+    #[pin]
+    initial_connection: bool,
 }
 
 impl<C> ReconnectingRequest<C> {
@@ -364,6 +366,7 @@ impl<C> ReconnectingRequest<C> {
             current_url: url,
             event_parser: EventParser::new(),
             last_event_id,
+            initial_connection: true,
         }
     }
 
@@ -454,7 +457,11 @@ where
                     *self.as_mut().project().event_parser = EventParser::new();
                     match self.send_request() {
                         Ok(resp) => {
-                            let retry = self.props.reconnect_opts.retry_initial;
+                            let retry = if self.initial_connection {
+                                self.props.reconnect_opts.retry_initial
+                            } else {
+                                self.props.reconnect_opts.reconnect
+                            };
                             self.as_mut()
                                 .project()
                                 .state
@@ -483,6 +490,7 @@ where
                                 .project()
                                 .state
                                 .set(State::Connected(resp.into_body()));
+                            self.as_mut().project().initial_connection.set(false);
 
                             return Poll::Ready(Some(Ok(SSE::Connected(ConnectionDetails::new(
                                 Response::new(status, headers),
@@ -518,8 +526,7 @@ where
                         ))));
                     }
                     Err(e) => {
-                        // This seems basically impossible. AFAIK we can only get this way if we
-                        // poll after it was already ready
+                        // This happens when the server is unreachable, e.g. connection refused.
                         warn!("request returned an error: {}", e);
                         if !*retry {
                             self.as_mut().project().state.set(State::New);
