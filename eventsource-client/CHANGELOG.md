@@ -2,6 +2,14 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.15.1](https://github.com/launchdarkly/rust-eventsource-client/compare/0.15.0...0.15.1) (2025-10-07)
+
+
+### Bug Fixes
+
+* Bump MSRV to 1.82.0 ([#95](https://github.com/launchdarkly/rust-eventsource-client/issues/95)) ([ddf8753](https://github.com/launchdarkly/rust-eventsource-client/commit/ddf8753b8bebcb2e8c4f55b8ba081adbb214825c))
+* Reconnect should use both reconnect and retry_initial for reconnection ([#99](https://github.com/launchdarkly/rust-eventsource-client/issues/99)) ([9a91e67](https://github.com/launchdarkly/rust-eventsource-client/commit/9a91e67c62baaac0660b114df6429b79f9308b0c))
+
 ## [0.15.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.14.0...0.15.0) (2025-03-27)
 
 
