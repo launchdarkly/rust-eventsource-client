@@ -1,6 +1,6 @@
 [package]
 name = "eventsource-client"
-version = "0.15.1"
+version = "0.16.0"
 description = "Client for the Server-Sent Events protocol (aka EventSource)"
 repository = "https://github.com/launchdarkly/rust-eventsource-client"
 authors = ["LaunchDarkly"]

@@ -2,6 +2,21 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.16.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.15.1...0.16.0) (2025-12-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* Stream will return `Poll::Ready(None)` when client has closed stream
+* Removed `Error::StreamClosed` in lieu of returning `Poll::Ready(None)`
+
+### Bug Fixes
+
+* Bump MSRV to 1.83 ([230d00c](https://github.com/launchdarkly/rust-eventsource-client/commit/230d00c95c6d49c8f49d5e1f5fe92e1d12599ce6))
+* Removed `Error::StreamClosed` in lieu of returning `Poll::Ready(None)` ([230d00c](https://github.com/launchdarkly/rust-eventsource-client/commit/230d00c95c6d49c8f49d5e1f5fe92e1d12599ce6))
+* Stop connecting if stream fails on initial request without opting into retry ([230d00c](https://github.com/launchdarkly/rust-eventsource-client/commit/230d00c95c6d49c8f49d5e1f5fe92e1d12599ce6))
+* Stream will return `Poll::Ready(None)` when client has closed stream ([230d00c](https://github.com/launchdarkly/rust-eventsource-client/commit/230d00c95c6d49c8f49d5e1f5fe92e1d12599ce6))
+
 ## [0.15.1](https://github.com/launchdarkly/rust-eventsource-client/compare/0.15.0...0.15.1) (2025-10-07)
 
 
