@@ -1,14 +1,98 @@
 use actix_web::rt::task::JoinHandle;
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use log::error;
 use std::{
+    future::Future,
+    pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use eventsource_client as es;
+use eventsource_client::{ByteStream, HttpTransport, TransportError};
 
 use crate::{Config, EventType};
+
+// Simple reqwest-based transport implementation
+#[derive(Clone)]
+struct ReqwestTransport {
+    client: reqwest::Client,
+}
+
+impl ReqwestTransport {
+    fn new(timeout: Option<Duration>) -> Result<Self, reqwest::Error> {
+        let mut builder = reqwest::Client::builder();
+
+        if let Some(timeout) = timeout {
+            builder = builder.timeout(timeout);
+        }
+
+        let client = builder.build()?;
+        Ok(Self { client })
+    }
+}
+
+impl HttpTransport for ReqwestTransport {
+    fn request(
+        &self,
+        request: http::Request<Option<String>>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<http::Response<ByteStream>, TransportError>>
+                + Send
+                + Sync
+                + 'static,
+        >,
+    > {
+        let (parts, body_opt) = request.into_parts();
+
+        let mut req_builder = self
+            .client
+            .request(parts.method.clone(), parts.uri.to_string());
+
+        for (name, value) in parts.headers.iter() {
+            req_builder = req_builder.header(name, value);
+        }
+
+        if let Some(body) = body_opt {
+            req_builder = req_builder.body(body);
+        }
+
+        let req = match req_builder.build() {
+            Ok(r) => r,
+            Err(e) => return Box::pin(async move { Err(TransportError::new(e)) }),
+        };
+
+        let client = self.client.clone();
+
+        Box::pin(async move {
+            let resp = client
+                .execute(req)
+                .await
+                .map_err(|e| TransportError::new(e))?;
+
+            let status = resp.status();
+            let headers = resp.headers().clone();
+
+            let byte_stream: ByteStream = Box::pin(
+                resp.bytes_stream()
+                    .map(|result| result.map_err(|e| TransportError::new(e))),
+            );
+
+            let mut response_builder = http::Response::builder().status(status);
+
+            for (name, value) in headers.iter() {
+                response_builder = response_builder.header(name, value);
+            }
+
+            let response = response_builder
+                .body(byte_stream)
+                .map_err(|e| TransportError::new(e))?;
+
+            Ok(response)
+        })
+    }
+}
 
 pub(crate) struct Inner {
     callback_counter: Mutex<i32>,
@@ -102,9 +186,12 @@ impl Inner {
             reconnect_options = reconnect_options.delay(Duration::from_millis(delay_ms));
         }
 
-        if let Some(read_timeout_ms) = config.read_timeout_ms {
-            client_builder = client_builder.read_timeout(Duration::from_millis(read_timeout_ms));
-        }
+        // Create transport with timeout configuration
+        let timeout = config.read_timeout_ms.map(Duration::from_millis);
+        let transport = match ReqwestTransport::new(timeout) {
+            Ok(t) => t,
+            Err(e) => return Err(format!("Failed to create transport {:?}", e)),
+        };
 
         if let Some(last_event_id) = &config.last_event_id {
             client_builder = client_builder.last_event_id(last_event_id.clone());
@@ -128,7 +215,9 @@ impl Inner {
         }
 
         Ok(Box::new(
-            client_builder.reconnect(reconnect_options.build()).build(),
+            client_builder
+                .reconnect(reconnect_options.build())
+                .build_with_transport(transport),
         ))
     }
 }

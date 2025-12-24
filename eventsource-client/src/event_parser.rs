@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, convert::TryFrom, str::from_utf8};
 
-use hyper::body::Bytes;
+use bytes::Bytes;
 use log::{debug, log_enabled, trace};
 use pin_project::pin_project;
 

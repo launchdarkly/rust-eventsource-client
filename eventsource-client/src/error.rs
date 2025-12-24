@@ -1,4 +1,5 @@
 use crate::response::{ErrorBody, Response};
+use crate::TransportError;
 
 /// Error type for invalid response headers encountered in ResponseDetails.
 #[derive(Debug)]
@@ -36,6 +37,8 @@ pub enum Error {
     UnexpectedResponse(Response, ErrorBody),
     /// An error reading from the HTTP response body.
     HttpStream(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// An error from the HTTP transport layer.
+    Transport(TransportError),
     /// The HTTP response stream ended
     Eof,
     /// The HTTP response stream ended unexpectedly (e.g. in the
@@ -61,6 +64,7 @@ impl std::fmt::Display for Error {
                 write!(f, "unexpected response: {status}")
             }
             HttpStream(err) => write!(f, "http error: {err}"),
+            Transport(err) => write!(f, "transport error: {err}"),
             Eof => write!(f, "eof"),
             UnexpectedEof => write!(f, "unexpected eof"),
             InvalidLine(line) => write!(f, "invalid line: {line}"),
@@ -96,6 +100,7 @@ impl Error {
     pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::HttpStream(err) => Some(err.as_ref()),
+            Error::Transport(err) => Some(err),
             _ => None,
         }
     }

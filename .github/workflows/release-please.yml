@@ -3,7 +3,8 @@ name: Run Release Please
 on:
   push:
     branches:
-      - main
+      - "main"
+      - "feat/**"
 
 jobs:
   release-package:
