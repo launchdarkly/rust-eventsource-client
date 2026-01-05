@@ -7,11 +7,12 @@ license = "Apache-2.0"
 [dependencies]
 futures = { version = "0.3.21" }
 serde = { version = "1.0", features = ["derive"] }
-eventsource-client = { path = "../eventsource-client" }
+eventsource-client = { path = "../eventsource-client", features = ["hyper", "hyper-rustls"] }
 serde_json = { version = "1.0.39"}
 actix = { version = "0.13.1"}
 actix-web = { version = "4"}
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# reqwest is required for callback client (test harness communication)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 env_logger = { version = "0.10.0" }
 log = "0.4.6"
 http = "1.0"

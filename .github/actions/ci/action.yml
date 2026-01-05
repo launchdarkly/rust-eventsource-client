@@ -12,6 +12,10 @@ runs:
       shell: bash
       run: cargo test --all-features -p eventsource-client
 
+    - name: Run slower integration tests
+      shell: bash
+      run: cargo test --all-features -p eventsource-client --lib -- --ignored
+
     - name: Run clippy checks
       shell: bash
       run: cargo clippy --all-features -p eventsource-client -- -D warnings

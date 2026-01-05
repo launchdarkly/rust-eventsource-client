@@ -4,7 +4,7 @@
 
 Client for the [Server-Sent Events] protocol (aka [EventSource]).
 
-This library focuses on the SSE protocol implementation. You provide the HTTP transport layer (hyper, reqwest, etc.), giving you full control over HTTP configuration like timeouts, TLS, and connection pooling.
+This library provides a complete SSE protocol implementation with a built-in HTTP transport powered by hyper v1. The pluggable transport design also allows you to use your own HTTP client (reqwest, custom, etc.) if needed.
 
 [Server-Sent Events]: https://html.spec.whatwg.org/multipage/server-sent-events.html
 [EventSource]: https://developer.mozilla.org/en-US/docs/Web/API/EventSource
@@ -12,7 +12,8 @@ This library focuses on the SSE protocol implementation. You provide the HTTP tr
 ## Requirements
 
 * Tokio async runtime
-* An HTTP client library (hyper, reqwest, or custom)
+* Enable the `hyper` feature for the built-in HTTP transport (enabled by default)
+* Optionally enable `hyper-rustls` for HTTPS support
 
 ## Quick Start
 
@@ -20,42 +21,29 @@ This library focuses on the SSE protocol implementation. You provide the HTTP tr
 
 ```toml
 [dependencies]
-eventsource-client = "0.17"
-reqwest = { version = "0.12", features = ["stream"] }  # or hyper v1
+eventsource-client = { version = "0.17", features = ["hyper", "hyper-rustls"] }
 futures = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-### 2. Implement HttpTransport
+**Features:**
+- `hyper` - Enables the built-in `HyperTransport` for HTTP support (enabled by default)
+- `hyper-rustls` - Adds HTTPS support via rustls (optional)
 
-Use one of our example implementations:
-
-```rust
-// See examples/reqwest_transport.rs for complete implementation
-use eventsource_client::{HttpTransport, ResponseFuture};
-
-struct ReqwestTransport {
-    client: reqwest::Client,
-}
-
-impl HttpTransport for ReqwestTransport {
-    fn request(&self, request: http::Request<()>) -> ResponseFuture {
-        // Convert request and call HTTP client
-        // See examples/ for full implementation
-    }
-}
-```
-
-### 3. Use the client
+### 2. Use the client
 
 ```rust
-use eventsource_client::{ClientBuilder, SSE};
+use eventsource_client::{ClientBuilder, HyperTransport, SSE};
 use futures::TryStreamExt;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create HTTP transport
-    let transport = ReqwestTransport::new()?;
+    // Create HTTP transport with timeouts
+    let transport = HyperTransport::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(30))
+        .build_https();  // or .build_http() for plain HTTP
 
     // Build SSE client
     let client = ClientBuilder::for_url("https://example.com/stream")?
@@ -77,9 +65,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Example
+
+The `tail` example demonstrates a complete SSE client using the built-in `HyperTransport`:
+
+**Run with HTTP:**
+```bash
+cargo run --example tail --features hyper -- http://sse.dev/test "Bearer token"
+```
+
+**Run with HTTPS:**
+```bash
+cargo run --example tail --features hyper,hyper-rustls -- https://sse.dev/test "Bearer token"
+```
+
+The example shows:
+- Creating a `HyperTransport` with custom timeouts
+- Building an SSE client with authentication headers
+- Configuring automatic reconnection with exponential backoff
+- Handling different SSE event types (events, comments, connection status)
+- Proper error handling for HTTPS URLs without the `hyper-rustls` feature
+
+See [`examples/tail.rs`](https://github.com/launchdarkly/rust-eventsource-client/tree/main/eventsource-client/examples/tail.rs) for the complete implementation.
+
 ## Features
 
-* **Pluggable HTTP transport** - Use any HTTP client (hyper, reqwest, or custom)
+* **Built-in HTTP transport** - Production-ready `HyperTransport` powered by hyper v1
+* **Configurable timeouts** - Connect, read, and write timeout support
+* **HTTPS support** - Optional rustls integration via the `hyper-rustls` feature
+* **Pluggable transport** - Use a custom HTTP client if needed (reqwest, etc.)
 * **Tokio-based streaming** - Efficient async/await support
 * **Custom headers** - Full control over HTTP requests
 * **Automatic reconnection** - Configurable exponential backoff
@@ -87,22 +101,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 * **Redirect following** - Automatic handling of HTTP redirects
 * **Last-Event-ID** - Resume streams from last received event
 
-## Migration from v0.16
+## Custom HTTP Transport
 
-If you're upgrading from v0.16 (which used hyper 0.14 internally), see [MIGRATION.md](MIGRATION.md) for a detailed migration guide.
+While the built-in `HyperTransport` works for most use cases, you can implement the `HttpTransport` trait to use your own HTTP client:
 
-Key changes:
-- You must now provide an HTTP transport implementation
-- Removed `build()`, `build_http()`, and other hyper-specific methods
-- Use `build_with_transport(transport)` instead
-- Timeout configuration moved to your HTTP transport
+```rust
+use eventsource_client::{HttpTransport, ByteStream, TransportError};
+use std::pin::Pin;
+use std::future::Future;
 
-## Why Pluggable Transport?
+#[derive(Clone)]
+struct MyTransport {
+    // Your HTTP client here
+}
 
-1. **Use latest HTTP clients** - Not locked to a specific HTTP library version
-2. **Full control** - Configure timeouts, TLS, proxies, etc. exactly as needed
-3. **Smaller library** - Focused on SSE protocol, not HTTP implementation
-4. **Flexibility** - Swap HTTP clients without changing SSE code
+impl HttpTransport for MyTransport {
+    fn request(
+        &self,
+        request: http::Request<Option<String>>,
+    ) -> Pin<Box<dyn Future<Output = Result<http::Response<ByteStream>, TransportError>> + Send + Sync + 'static>> {
+        // Implement HTTP request handling
+        // See the HttpTransport trait documentation for details
+        todo!()
+    }
+}
+```
+
+This allows you to:
+- Use a different HTTP client (reqwest, custom, etc.)
+- Implement custom connection pooling or proxy logic
+- Add specialized middleware or observability
 
 ## Architecture
 
@@ -119,12 +147,12 @@ Key changes:
               │ HttpTransport trait
               ▼
 ┌─────────────────────────────────────┐
-│   Your HTTP Client                  │
-│   (hyper, reqwest, custom, etc.)    │
+│   HTTP Transport Layer              │
+│   • HyperTransport (built-in)       │
+│   • Custom (reqwest, etc.)          │
 └─────────────────────────────────────┘
 ```
 
 ## Stability
 
-Early stage release for feedback purposes. May contain bugs or performance
-issues. API subject to change.
+This library is actively maintained. The SSE protocol implementation is stable. Breaking changes follow semantic versioning.
