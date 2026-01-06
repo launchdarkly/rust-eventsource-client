@@ -2,14 +2,12 @@ use actix_web::rt::task::JoinHandle;
 use futures::{StreamExt, TryStreamExt};
 use log::error;
 use std::{
-    future::Future,
-    pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use eventsource_client as es;
-use eventsource_client::{ByteStream, HttpTransport, TransportError};
+use eventsource_client::{ByteStream, HttpTransport, ResponseFuture, TransportError};
 
 use crate::{Config, EventType};
 
@@ -33,17 +31,7 @@ impl ReqwestTransport {
 }
 
 impl HttpTransport for ReqwestTransport {
-    fn request(
-        &self,
-        request: http::Request<Option<String>>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<http::Response<ByteStream>, TransportError>>
-                + Send
-                + Sync
-                + 'static,
-        >,
-    > {
+    fn request(&self, request: http::Request<Option<String>>) -> ResponseFuture {
         let (parts, body_opt) = request.into_parts();
 
         let mut req_builder = self
@@ -69,14 +57,14 @@ impl HttpTransport for ReqwestTransport {
             let resp = client
                 .execute(req)
                 .await
-                .map_err(|e| TransportError::new(e))?;
+                .map_err(TransportError::new)?;
 
             let status = resp.status();
             let headers = resp.headers().clone();
 
             let byte_stream: ByteStream = Box::pin(
                 resp.bytes_stream()
-                    .map(|result| result.map_err(|e| TransportError::new(e))),
+                    .map(|result| result.map_err(TransportError::new)),
             );
 
             let mut response_builder = http::Response::builder().status(status);
@@ -87,7 +75,7 @@ impl HttpTransport for ReqwestTransport {
 
             let response = response_builder
                 .body(byte_stream)
-                .map_err(|e| TransportError::new(e))?;
+                .map_err(TransportError::new)?;
 
             Ok(response)
         })

@@ -16,12 +16,7 @@
 //! // See examples/hyper_transport.rs or examples/reqwest_transport.rs for reference implementations
 //! # struct MyTransport;
 //! # impl eventsource_client::HttpTransport for MyTransport {
-//! #     fn request(&self, _req: http::Request<()>)
-//! #         -> std::pin::Pin<Box<dyn std::future::Future<
-//! #             Output = Result<
-//! #                 http::Response<eventsource_client::ByteStream>,
-//! #                 eventsource_client::TransportError
-//! #             >> + Send>> {
+//! #     fn request(&self, _req: http::Request<Option<String>>) -> eventsource_client::ResponseFuture {
 //! #         unimplemented!()
 //! #     }
 //! # }

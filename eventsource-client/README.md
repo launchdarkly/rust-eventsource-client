@@ -32,16 +32,14 @@ Use one of our example implementations:
 
 ```rust
 // See examples/reqwest_transport.rs for complete implementation
-use eventsource_client::{HttpTransport, ByteStream, TransportError};
+use eventsource_client::{HttpTransport, ResponseFuture};
 
 struct ReqwestTransport {
     client: reqwest::Client,
 }
 
 impl HttpTransport for ReqwestTransport {
-    fn request(&self, request: http::Request<()>)
-        -> Pin<Box<dyn Future<Output = Result<http::Response<ByteStream>, TransportError>> + Send + Sync>>
-    {
+    fn request(&self, request: http::Request<()>) -> ResponseFuture {
         // Convert request and call HTTP client
         // See examples/ for full implementation
     }

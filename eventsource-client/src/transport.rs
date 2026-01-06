@@ -22,6 +22,15 @@ pub use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, Uri};
 /// This represents the streaming response body from an HTTP request.
 pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, TransportError>> + Send + Sync>>;
 
+/// A pinned, boxed future for an HTTP response.
+///
+/// This represents the future returned by [`HttpTransport::request`].
+pub type ResponseFuture = Pin<
+    Box<
+        dyn Future<Output = Result<Response<ByteStream>, TransportError>> + Send + Sync + 'static,
+    >,
+>;
+
 /// Error type for HTTP transport operations.
 ///
 /// This wraps transport-specific errors (network failures, timeouts, etc.) in a
@@ -114,15 +123,5 @@ pub trait HttpTransport: Send + Sync + 'static {
     /// - The transport should NOT follow redirects - the SSE client handles this
     /// - The transport should NOT retry requests - the SSE client handles this
     /// - The transport MAY implement timeouts as desired
-    fn request(
-        &self,
-        request: Request<Option<String>>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<Response<ByteStream>, TransportError>>
-                + Send
-                + Sync
-                + 'static,
-        >,
-    >;
+    fn request(&self, request: Request<Option<String>>) -> ResponseFuture;
 }

@@ -21,7 +21,7 @@ use tokio::time::Sleep;
 use crate::{
     config::ReconnectOptions,
     response::{ErrorBody, Response},
-    {ByteStream, HttpTransport},
+    {ByteStream, HttpTransport, ResponseFuture},
 };
 use crate::{
     error::{Error, Result},
@@ -218,17 +218,7 @@ enum State {
     Connecting {
         retry: bool,
         #[pin]
-        resp: Pin<
-            Box<
-                dyn Future<
-                        Output = std::result::Result<
-                            http::Response<ByteStream>,
-                            crate::TransportError,
-                        >,
-                    > + Send
-                    + Sync,
-            >,
-        >,
+        resp: ResponseFuture,
     },
     Connected(#[pin] ByteStream),
     WaitingToReconnect(#[pin] Sleep),
@@ -301,21 +291,7 @@ impl<T: HttpTransport> ReconnectingRequest<T> {
         }
     }
 
-    fn send_request(
-        &self,
-    ) -> Result<
-        Pin<
-            Box<
-                dyn Future<
-                        Output = std::result::Result<
-                            http::Response<ByteStream>,
-                            crate::TransportError,
-                        >,
-                    > + Send
-                    + Sync,
-            >,
-        >,
-    > {
+    fn send_request(&self) -> Result<ResponseFuture> {
         let mut request_builder = Request::builder()
             .method(self.props.method.as_str())
             .uri(&self.current_url);
@@ -640,7 +616,9 @@ mod tests {
 
     use crate::{
         client::{RequestProps, State},
-        ReconnectOptionsBuilder, ReconnectingRequest, {ByteStream, HttpTransport, TransportError},
+        ReconnectOptionsBuilder,
+        ReconnectingRequest,
+        {ByteStream, HttpTransport, ResponseFuture, TransportError},
     };
 
     // Mock transport for testing
@@ -656,16 +634,7 @@ mod tests {
     }
 
     impl HttpTransport for MockTransport {
-        fn request(
-            &self,
-            _request: http::Request<Option<String>>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<Output = Result<http::Response<ByteStream>, TransportError>>
-                    + Send
-                    + Sync,
-            >,
-        > {
+        fn request(&self, _request: http::Request<Option<String>>) -> ResponseFuture {
             if self.fail_request {
                 // Simulate a connection error
                 Box::pin(async {
