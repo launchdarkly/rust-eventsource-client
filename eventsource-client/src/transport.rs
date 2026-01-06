@@ -25,11 +25,8 @@ pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, TransportError>> +
 /// A pinned, boxed future for an HTTP response.
 ///
 /// This represents the future returned by [`HttpTransport::request`].
-pub type ResponseFuture = Pin<
-    Box<
-        dyn Future<Output = Result<Response<ByteStream>, TransportError>> + Send + Sync,
-    >,
->;
+pub type ResponseFuture =
+    Pin<Box<dyn Future<Output = Result<Response<ByteStream>, TransportError>> + Send + Sync>>;
 
 /// Error type for HTTP transport operations.
 ///

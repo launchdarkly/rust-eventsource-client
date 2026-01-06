@@ -54,10 +54,7 @@ impl HttpTransport for ReqwestTransport {
         let client = self.client.clone();
 
         Box::pin(async move {
-            let resp = client
-                .execute(req)
-                .await
-                .map_err(TransportError::new)?;
+            let resp = client.execute(req).await.map_err(TransportError::new)?;
 
             let status = resp.status();
             let headers = resp.headers().clone();

@@ -616,8 +616,7 @@ mod tests {
 
     use crate::{
         client::{RequestProps, State},
-        ReconnectOptionsBuilder,
-        ReconnectingRequest,
+        ReconnectOptionsBuilder, ReconnectingRequest,
         {ByteStream, HttpTransport, ResponseFuture, TransportError},
     };
 
