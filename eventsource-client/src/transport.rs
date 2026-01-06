@@ -27,7 +27,7 @@ pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, TransportError>> +
 /// This represents the future returned by [`HttpTransport::request`].
 pub type ResponseFuture = Pin<
     Box<
-        dyn Future<Output = Result<Response<ByteStream>, TransportError>> + Send + Sync + 'static,
+        dyn Future<Output = Result<Response<ByteStream>, TransportError>> + Send + Sync,
     >,
 >;
 
