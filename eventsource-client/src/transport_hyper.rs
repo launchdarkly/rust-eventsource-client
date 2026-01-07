@@ -113,10 +113,7 @@ impl HyperTransport {
     /// For HTTPS support or timeout configuration, use [`HyperTransport::builder()`].
     pub fn new() -> Self {
         let connector = hyper_util::client::legacy::connect::HttpConnector::new();
-        // TODO(@@@): What are the default timeouts here?
         let timeout_connector = TimeoutConnector::new(connector);
-        // TODO(@@@): We should check if this is something we want to support. Instantiating a new
-        // tokio executor might be problematic. I'm not sure
         let client = HyperClient::builder(TokioExecutor::new()).build(timeout_connector);
 
         Self { client }
@@ -159,7 +156,6 @@ impl HyperTransport {
             .build();
 
         let timeout_connector = TimeoutConnector::new(connector);
-        // TODO(@@@): Also have to consider the tokio executor here
         let client = HyperClient::builder(TokioExecutor::new()).build(timeout_connector);
 
         HyperTransport { client }
@@ -296,13 +292,11 @@ impl HyperTransportBuilder {
         C::Future: Send + 'static,
         C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
-        // QUESTION(@@@): Is this a method we still want to support?
         let mut timeout_connector = TimeoutConnector::new(connector);
         timeout_connector.set_connect_timeout(self.connect_timeout);
         timeout_connector.set_read_timeout(self.read_timeout);
         timeout_connector.set_write_timeout(self.write_timeout);
 
-        // TODO(@@@): There is that pesky TokioExecutor again
         let client = HyperClient::builder(TokioExecutor::new()).build(timeout_connector);
 
         HyperTransport { client }
@@ -380,8 +374,6 @@ fn body_to_stream(
                 if let Ok(data) = frame.into_data() {
                     Some((Ok(data), body))
                 } else {
-                    // QUESTION(@@@): Is this going to be problematic? Is returning an error here
-                    // necessary?
                     // Skip non-data frames (trailers, etc.)
                     Some((
                         Err(TransportError::new(std::io::Error::other("non-data frame"))),
