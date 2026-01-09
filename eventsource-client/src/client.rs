@@ -1,16 +1,7 @@
 use base64::prelude::*;
 
 use futures::{ready, Stream};
-use hyper::{
-    body::HttpBody,
-    client::{
-        connect::{Connect, Connection},
-        ResponseFuture,
-    },
-    header::{HeaderMap, HeaderName, HeaderValue},
-    service::Service,
-    Body, Request, Uri,
-};
+use http::{HeaderMap, HeaderName, HeaderValue, Request, Uri};
 use log::{debug, info, trace, warn};
 use pin_project::pin_project;
 use std::{
@@ -18,39 +9,30 @@ use std::{
     fmt::{self, Debug, Formatter},
     future::Future,
     io::ErrorKind,
-    pin::{pin, Pin},
+    pin::Pin,
     str::FromStr,
+    sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant},
 };
 
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    time::Sleep,
-};
+use tokio::time::Sleep;
 
 use crate::{
     config::ReconnectOptions,
     response::{ErrorBody, Response},
+    {ByteStream, HttpTransport, ResponseFuture},
 };
 use crate::{
     error::{Error, Result},
     event_parser::ConnectionDetails,
 };
 
-use hyper::client::HttpConnector;
-use hyper_timeout::TimeoutConnector;
-
 use crate::event_parser::EventParser;
 use crate::event_parser::SSE;
 
 use crate::retry::{BackoffRetry, RetryStrategy};
 use std::error::Error as StdError;
-
-#[cfg(feature = "rustls")]
-use hyper_rustls::HttpsConnectorBuilder;
-
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Represents a [`Pin`]'d [`Send`] + [`Sync`] stream, returned by [`Client`]'s stream method.
 pub type BoxStream<T> = Pin<boxed::Box<dyn Stream<Item = T> + Send + Sync>>;
@@ -75,9 +57,6 @@ pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
-    connect_timeout: Option<Duration>,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
     last_event_id: Option<String>,
     method: String,
     body: Option<String>,
@@ -99,9 +78,6 @@ impl ClientBuilder {
             url,
             headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
-            connect_timeout: None,
-            read_timeout: None,
-            write_timeout: None,
             last_event_id: None,
             method: String::from("GET"),
             max_redirects: None,
@@ -148,25 +124,6 @@ impl ClientBuilder {
         self.header("Authorization", &value)
     }
 
-    /// Set a connect timeout for the underlying connection. There is no connect timeout by
-    /// default.
-    pub fn connect_timeout(mut self, connect_timeout: Duration) -> ClientBuilder {
-        self.connect_timeout = Some(connect_timeout);
-        self
-    }
-
-    /// Set a read timeout for the underlying connection. There is no read timeout by default.
-    pub fn read_timeout(mut self, read_timeout: Duration) -> ClientBuilder {
-        self.read_timeout = Some(read_timeout);
-        self
-    }
-
-    /// Set a write timeout for the underlying connection. There is no write timeout by default.
-    pub fn write_timeout(mut self, write_timeout: Duration) -> ClientBuilder {
-        self.write_timeout = Some(write_timeout);
-        self
-    }
-
     /// Configure the client's reconnect behaviour according to the supplied
     /// [`ReconnectOptions`].
     ///
@@ -184,60 +141,28 @@ impl ClientBuilder {
         self
     }
 
-    /// Build with a specific client connector.
-    pub fn build_with_conn<C>(self, conn: C) -> impl Client
+    /// Build a client with a custom HTTP transport implementation.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - An implementation of the [`HttpTransport`] trait that will handle
+    ///   HTTP requests. See the `examples/` directory for reference implementations.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use eventsource_client::ClientBuilder;
+    ///
+    /// let transport = MyTransport::new();
+    /// let client = ClientBuilder::for_url("https://example.com/events")?
+    ///     .build_with_transport(transport);
+    /// ```
+    pub fn build_with_transport<T>(self, transport: T) -> impl Client
     where
-        C: Service<Uri> + Clone + Send + Sync + 'static,
-        C::Response: Connection + AsyncRead + AsyncWrite + Send + Unpin,
-        C::Future: Send + 'static,
-        C::Error: Into<BoxError>,
-    {
-        let mut connector = TimeoutConnector::new(conn);
-        connector.set_connect_timeout(self.connect_timeout);
-        connector.set_read_timeout(self.read_timeout);
-        connector.set_write_timeout(self.write_timeout);
-
-        let client = hyper::Client::builder().build::<_, hyper::Body>(connector);
-
-        ClientImpl {
-            http: client,
-            request_props: RequestProps {
-                url: self.url,
-                headers: self.headers,
-                method: self.method,
-                body: self.body,
-                reconnect_opts: self.reconnect_opts,
-                max_redirects: self.max_redirects.unwrap_or(DEFAULT_REDIRECT_LIMIT),
-            },
-            last_event_id: self.last_event_id,
-        }
-    }
-
-    /// Build with an HTTP client connector.
-    pub fn build_http(self) -> impl Client {
-        self.build_with_conn(HttpConnector::new())
-    }
-
-    #[cfg(feature = "rustls")]
-    /// Build with an HTTPS client connector, using the OS root certificate store.
-    pub fn build(self) -> impl Client {
-        let conn = HttpsConnectorBuilder::new()
-            .with_native_roots()
-            .https_or_http()
-            .enable_http1()
-            .enable_http2()
-            .build();
-
-        self.build_with_conn(conn)
-    }
-
-    /// Build with the given [`hyper::client::Client`].
-    pub fn build_with_http_client<C>(self, http: hyper::Client<C>) -> impl Client
-    where
-        C: Connect + Clone + Send + Sync + 'static,
+        T: HttpTransport,
     {
         ClientImpl {
-            http,
+            transport: Arc::new(transport),
             request_props: RequestProps {
                 url: self.url,
                 headers: self.headers,
@@ -263,17 +188,13 @@ struct RequestProps {
 
 /// A client implementation that connects to a server using the Server-Sent Events protocol
 /// and consumes the event stream indefinitely.
-/// Can be parameterized with different hyper Connectors, such as HTTP or HTTPS.
-struct ClientImpl<C> {
-    http: hyper::Client<C>,
+struct ClientImpl<T: HttpTransport> {
+    transport: Arc<T>,
     request_props: RequestProps,
     last_event_id: Option<String>,
 }
 
-impl<C> Client for ClientImpl<C>
-where
-    C: Connect + Clone + Send + Sync + 'static,
-{
+impl<T: HttpTransport> Client for ClientImpl<T> {
     /// Connect to the server and begin consuming the stream. Produces a
     /// [`Stream`] of [`Event`](crate::Event)s wrapped in [`Result`].
     ///
@@ -283,7 +204,7 @@ where
     /// reconnect for retryable errors.
     fn stream(&self) -> BoxStream<Result<SSE>> {
         Box::pin(ReconnectingRequest::new(
-            self.http.clone(),
+            Arc::clone(&self.transport),
             self.request_props.clone(),
             self.last_event_id.clone(),
         ))
@@ -299,7 +220,7 @@ enum State {
         #[pin]
         resp: ResponseFuture,
     },
-    Connected(#[pin] hyper::Body),
+    Connected(#[pin] ByteStream),
     WaitingToReconnect(#[pin] Sleep),
     FollowingRedirect(Option<HeaderValue>),
     StreamClosed,
@@ -327,8 +248,8 @@ impl Debug for State {
 
 #[must_use = "streams do nothing unless polled"]
 #[pin_project]
-pub struct ReconnectingRequest<C> {
-    http: hyper::Client<C>,
+pub struct ReconnectingRequest<T: HttpTransport> {
+    transport: Arc<T>,
     props: RequestProps,
     #[pin]
     state: State,
@@ -341,12 +262,12 @@ pub struct ReconnectingRequest<C> {
     initial_connection: bool,
 }
 
-impl<C> ReconnectingRequest<C> {
+impl<T: HttpTransport> ReconnectingRequest<T> {
     fn new(
-        http: hyper::Client<C>,
+        transport: Arc<T>,
         props: RequestProps,
         last_event_id: Option<String>,
-    ) -> ReconnectingRequest<C> {
+    ) -> ReconnectingRequest<T> {
         let reconnect_delay = props.reconnect_opts.delay;
         let delay_max = props.reconnect_opts.delay_max;
         let backoff_factor = props.reconnect_opts.backoff_factor;
@@ -354,7 +275,7 @@ impl<C> ReconnectingRequest<C> {
         let url = props.url.clone();
         ReconnectingRequest {
             props,
-            http,
+            transport,
             state: State::New,
             retry_strategy: Box::new(BackoffRetry::new(
                 reconnect_delay,
@@ -370,10 +291,7 @@ impl<C> ReconnectingRequest<C> {
         }
     }
 
-    fn send_request(&self) -> Result<ResponseFuture>
-    where
-        C: Connect + Clone + Send + Sync + 'static,
-    {
+    fn send_request(&self) -> Result<ResponseFuture> {
         let mut request_builder = Request::builder()
             .method(self.props.method.as_str())
             .uri(&self.current_url);
@@ -391,16 +309,13 @@ impl<C> ReconnectingRequest<C> {
             }
         }
 
-        let body = match &self.props.body {
-            Some(body) => Body::from(body.to_string()),
-            None => Body::empty(),
-        };
-
+        // Include the request body if set. Most SSE requests use GET and will have None,
+        // but some implementations (e.g., using REPORT method) may include a body.
         let request = request_builder
-            .body(body)
+            .body(self.props.body.clone())
             .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
-        Ok(self.http.request(request))
+        Ok(self.transport.request(request))
     }
 
     fn reset_redirects(self: Pin<&mut Self>) {
@@ -419,10 +334,7 @@ impl<C> ReconnectingRequest<C> {
     }
 }
 
-impl<C> Stream for ReconnectingRequest<C>
-where
-    C: Connect + Clone + Send + Sync + 'static,
-{
+impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
     type Item = Result<SSE>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -477,7 +389,11 @@ where
                 }
                 StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
                     Ok(resp) => {
-                        debug!("HTTP response: {:#?}", resp);
+                        debug!(
+                            "HTTP response status: {}, headers: {:?}",
+                            resp.status(),
+                            resp.headers()
+                        );
 
                         if resp.status().is_success() {
                             self.as_mut().project().retry_strategy.reset(Instant::now());
@@ -504,7 +420,7 @@ where
                                 debug!("following redirect {}", self.redirect_count);
 
                                 self.as_mut().project().state.set(State::FollowingRedirect(
-                                    resp.headers().get(hyper::header::LOCATION).cloned(),
+                                    resp.headers().get("location").cloned(),
                                 ));
                                 continue;
                             } else {
@@ -517,9 +433,13 @@ where
                             }
                         }
 
+                        let status = resp.status();
+                        let headers = resp.headers().clone();
+                        let body = resp.into_body();
+
                         let error = Error::UnexpectedResponse(
-                            Response::new(resp.status(), resp.headers().clone()),
-                            ErrorBody::new(resp.into_body()),
+                            Response::new(status, headers),
+                            ErrorBody::new(body),
                         );
 
                         if !*retry {
@@ -547,7 +467,7 @@ where
                         warn!("request returned an error: {}", e);
                         if !*retry {
                             self.as_mut().project().state.set(State::StreamClosed);
-                            return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
+                            return Poll::Ready(Some(Err(Error::Transport(e))));
                         }
 
                         let duration = self
@@ -572,7 +492,7 @@ where
                         return Poll::Ready(Some(Err(e)));
                     }
                 },
-                StateProj::Connected(body) => match ready!(body.poll_data(cx)) {
+                StateProj::Connected(mut body) => match ready!(body.as_mut().poll_next(cx)) {
                     Some(Ok(result)) => {
                         this.event_parser.process_bytes(result)?;
                         continue;
@@ -590,15 +510,16 @@ where
                                 .set(State::WaitingToReconnect(delay(duration, "reconnecting")));
                         }
 
+                        // Check if the underlying error is a timeout
                         if let Some(cause) = e.source() {
                             if let Some(downcast) = cause.downcast_ref::<std::io::Error>() {
                                 if let std::io::ErrorKind::TimedOut = downcast.kind() {
                                     return Poll::Ready(Some(Err(Error::TimedOut)));
                                 }
                             }
-                        } else {
-                            return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
                         }
+
+                        return Poll::Ready(Some(Err(Error::Transport(e))));
                     }
                     None => {
                         let duration = self
@@ -651,15 +572,16 @@ fn delay(dur: Duration, description: &str) -> Sleep {
 
 mod private {
     use crate::client::ClientImpl;
+    use crate::HttpTransport;
 
     pub trait Sealed {}
-    impl<C> Sealed for ClientImpl<C> {}
+    impl<T: HttpTransport> Sealed for ClientImpl<T> {}
 }
 
 #[cfg(test)]
 mod tests {
     use crate::ClientBuilder;
-    use hyper::http::HeaderValue;
+    use http::HeaderValue;
     use test_case::test_case;
 
     #[test_case("user", "pass", "dXNlcjpwYXNz")]
@@ -685,40 +607,71 @@ mod tests {
         assert_eq!(Some(&expected), actual);
     }
 
-    use std::{pin::pin, str::FromStr, time::Duration};
+    use std::{pin::pin, sync::Arc, time::Duration};
 
-    use futures::TryStreamExt;
-    use hyper::{client::HttpConnector, Body, HeaderMap, Request, Uri};
-    use hyper_timeout::TimeoutConnector;
+    use bytes::Bytes;
+    use futures::{stream, TryStreamExt};
+    use http::HeaderMap;
     use tokio::time::timeout;
 
     use crate::{
         client::{RequestProps, State},
         ReconnectOptionsBuilder, ReconnectingRequest,
+        {ByteStream, HttpTransport, ResponseFuture, TransportError},
     };
 
-    const INVALID_URI: &'static str = "http://mycrazyunexsistenturl.invaliddomainext";
+    // Mock transport for testing
+    #[derive(Clone)]
+    struct MockTransport {
+        fail_request: bool,
+    }
+
+    impl MockTransport {
+        fn new(_url: String, fail_request: bool) -> Self {
+            Self { fail_request }
+        }
+    }
+
+    impl HttpTransport for MockTransport {
+        fn request(&self, _request: http::Request<Option<String>>) -> ResponseFuture {
+            if self.fail_request {
+                // Simulate a connection error
+                Box::pin(async {
+                    Err(TransportError::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "connection refused",
+                    )))
+                })
+            } else {
+                // Return a 404 response
+                Box::pin(async {
+                    let byte_stream: ByteStream =
+                        Box::pin(stream::iter(vec![Ok(Bytes::from("not found"))]));
+                    let response = http::Response::builder()
+                        .status(404)
+                        .body(byte_stream)
+                        .unwrap();
+                    Ok(response)
+                })
+            }
+        }
+    }
+
+    const INVALID_URI: &str = "http://mycrazyunexsistenturl.invaliddomainext";
 
     #[test_case(INVALID_URI, false, |state| matches!(state, State::StreamClosed))]
     #[test_case(INVALID_URI, true, |state| matches!(state, State::WaitingToReconnect(_)))]
     #[tokio::test]
     async fn initial_connection(uri: &str, retry_initial: bool, expected: fn(&State) -> bool) {
-        let default_timeout = Some(Duration::from_secs(1));
-        let conn = HttpConnector::new();
-        let mut connector = TimeoutConnector::new(conn);
-        connector.set_connect_timeout(default_timeout);
-        connector.set_read_timeout(default_timeout);
-        connector.set_write_timeout(default_timeout);
-
         let reconnect_opts = ReconnectOptionsBuilder::new(false)
             .backoff_factor(1)
             .delay(Duration::from_secs(1))
             .retry_initial(retry_initial)
             .build();
 
-        let http = hyper::Client::builder().build::<_, hyper::Body>(connector);
+        let transport = Arc::new(MockTransport::new(uri.to_string(), true));
         let req_props = RequestProps {
-            url: Uri::from_str(uri).unwrap(),
+            url: uri.parse().unwrap(),
             headers: HeaderMap::new(),
             method: "GET".to_string(),
             body: None,
@@ -726,16 +679,10 @@ mod tests {
             max_redirects: 10,
         };
 
-        let mut reconnecting_request = ReconnectingRequest::new(http, req_props, None);
+        let mut reconnecting_request = ReconnectingRequest::new(transport.clone(), req_props, None);
 
-        // sets initial state
-        let resp = reconnecting_request.http.request(
-            Request::builder()
-                .method("GET")
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        );
+        // sets initial state with a failing request
+        let resp = transport.request(http::Request::builder().uri(uri).body(None).unwrap());
 
         reconnecting_request.state = State::Connecting {
             retry: reconnecting_request.props.reconnect_opts.retry_initial,
