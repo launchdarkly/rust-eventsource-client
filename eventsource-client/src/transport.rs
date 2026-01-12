@@ -96,7 +96,7 @@ impl StdError for TransportError {
 ///     }
 /// }
 /// ```
-pub trait HttpTransport: Send + Sync + 'static {
+pub trait HttpTransport: Send + Sync + Clone + 'static {
     /// Execute an HTTP request and return a streaming response.
     ///
     /// # Arguments

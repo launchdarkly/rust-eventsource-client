@@ -117,9 +117,9 @@ impl ClientBuilder {
 
     /// Set the Authorization header with the calculated basic authentication value.
     pub fn basic_auth(self, username: &str, password: &str) -> Result<ClientBuilder> {
-        let auth = format!("{}:{}", username, password);
+        let auth = format!("{username}:{password}");
         let encoded = BASE64_STANDARD.encode(auth);
-        let value = format!("Basic {}", encoded);
+        let value = format!("Basic {encoded}");
 
         self.header("Authorization", &value)
     }
@@ -154,7 +154,8 @@ impl ClientBuilder {
     /// use eventsource_client::ClientBuilder;
     ///
     /// let transport = MyTransport::new();
-    /// let client = ClientBuilder::for_url("https://example.com/events")?
+    /// let client = ClientBuilder::for_url("https://sse.dev/test")
+    ///     .expect("failed to create client builder")
     ///     .build_with_transport(transport);
     /// ```
     pub fn build_with_transport<T>(self, transport: T) -> impl Client
@@ -464,7 +465,7 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
                     }
                     Err(e) => {
                         // This happens when the server is unreachable, e.g. connection refused.
-                        warn!("request returned an error: {}", e);
+                        warn!("request returned an error: {e}");
                         if !*retry {
                             self.as_mut().project().state.set(State::StreamClosed);
                             return Poll::Ready(Some(Err(Error::Transport(e))));
@@ -566,7 +567,7 @@ fn uri_from_header(maybe_header: &Option<HeaderValue>) -> Result<Uri> {
 }
 
 fn delay(dur: Duration, description: &str) -> Sleep {
-    info!("Waiting {:?} before {}", dur, description);
+    info!("Waiting {dur:?} before {description}");
     tokio::time::sleep(dur)
 }
 
@@ -601,7 +602,7 @@ mod tests {
             .expect("failed to add authentication");
 
         let actual = builder.headers.get("Authorization");
-        let expected = HeaderValue::from_str(format!("Basic {}", expected).as_str())
+        let expected = HeaderValue::from_str(format!("Basic {expected}").as_str())
             .expect("unable to create expected header");
 
         assert_eq!(Some(&expected), actual);
