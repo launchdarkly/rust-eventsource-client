@@ -146,19 +146,7 @@ impl HyperTransport {
             hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
         >,
     > {
-        use hyper_rustls::HttpsConnectorBuilder;
-
-        let connector = HttpsConnectorBuilder::new()
-            .with_webpki_roots()
-            .https_or_http()
-            .enable_http1()
-            .enable_http2()
-            .build();
-
-        let timeout_connector = TimeoutConnector::new(connector);
-        let client = HyperClient::builder(TokioExecutor::new()).build(timeout_connector);
-
-        HyperTransport { client }
+        return HyperTransport::builder().build_https();
     }
 
     /// Create a new builder for configuring HyperTransport
@@ -246,7 +234,11 @@ impl HyperTransportBuilder {
         use hyper_rustls::HttpsConnectorBuilder;
 
         let connector = HttpsConnectorBuilder::new()
-            .with_webpki_roots()
+            .with_native_roots()
+            .unwrap_or_else(|_| {
+                log::debug!("Falling back to webpki roots for HTTPS connector");
+                HttpsConnectorBuilder::new().with_webpki_roots()
+            })
             .https_or_http()
             .enable_http1()
             .enable_http2()
