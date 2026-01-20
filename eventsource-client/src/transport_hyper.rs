@@ -146,7 +146,7 @@ impl HyperTransport {
             hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
         >,
     > {
-        return HyperTransport::builder().build_https();
+        HyperTransport::builder().build_https()
     }
 
     /// Create a new builder for configuring HyperTransport
