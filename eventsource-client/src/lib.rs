@@ -1,4 +1,5 @@
 #![warn(rust_2018_idioms)]
+#![allow(clippy::result_large_err)]
 //! Client for the [Server-Sent Events] protocol (aka [EventSource]).
 //!
 //! ```
