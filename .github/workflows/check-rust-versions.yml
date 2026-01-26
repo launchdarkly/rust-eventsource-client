@@ -10,12 +10,12 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     outputs:
-      latest: ${{ steps.parse.outputs.latest }}
+      target: ${{ steps.parse.outputs.target }}
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v4
         # Perform a GET request to endoflife.date for the Rust language. The response
-        # contains all Rust releases; we're interested in the 0'th (latest).
+        # contains all Rust releases; we're interested in the 2nd index (antepenultimate).
       - name: Fetch officially supported Rust versions
         uses: JamesIves/fetch-api-data-action@396ebea7d13904824f85b892b1616985f847301c
         with:
@@ -23,10 +23,11 @@ jobs:
           configuration: '{ "method": "GET" }'
           debug: true
         # Parse the response JSON and insert into environment variables for the next step.
+        # We use the antepenultimate (third most recent) version as our target.
       - name: Parse officially supported Rust versions
         id: parse
         run: |
-          echo "latest=${{ fromJSON(env.fetch-api-data)[0].cycle }}" >> $GITHUB_OUTPUT
+          echo "target=${{ fromJSON(env.fetch-api-data)[2].cycle }}" >> $GITHUB_OUTPUT
 
   create-prs:
     permissions:
@@ -35,7 +36,7 @@ jobs:
     needs: check-rust-eol
     runs-on: ubuntu-latest
     env:
-      officialLatestVersion: ${{ needs.check-rust-eol.outputs.latest }}
+      officialTargetVersion: ${{ needs.check-rust-eol.outputs.target }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,15 +45,15 @@ jobs:
         run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
       - name: Update rust-versions.env and Cargo.toml
-        if: steps.rust-versions.outputs.latest != env.officialLatestVersion
+        if: steps.rust-versions.outputs.latest != env.officialTargetVersion
         id: update-rust-versions
         run: |
           # Update the versions file
-          sed -i -e "s#latest=[^ ]*#latest=${{ env.officialLatestVersion }}#g" \
+          sed -i -e "s#latest=[^ ]*#latest=${{ env.officialTargetVersion }}#g" \
                   ./.github/variables/rust-versions.env
 
           # Update Cargo.toml rust-version field
-          sed -i -e "s#rust-version = \"[^\"]*\"#rust-version = \"${{ env.officialLatestVersion }}.0\"#g" \
+          sed -i -e "s#rust-version = \"[^\"]*\"#rust-version = \"${{ env.officialTargetVersion }}.0\"#g" \
                   ./eventsource-client/Cargo.toml
 
       - name: Create pull request
@@ -63,9 +64,9 @@ jobs:
           add-paths: |
             .github/variables/rust-versions.env
             eventsource-client/Cargo.toml
-          branch: "launchdarklyreleasebot/update-to-rust${{ env.officialLatestVersion }}"
+          branch: "launchdarklyreleasebot/update-to-rust${{ env.officialTargetVersion }}"
           author: "LaunchDarklyReleaseBot <LaunchDarklyReleaseBot@launchdarkly.com>"
           committer: "LaunchDarklyReleaseBot <LaunchDarklyReleaseBot@launchdarkly.com>"
-          title: "fix: Bump MSRV from ${{ steps.rust-versions.outputs.latest }} to ${{ env.officialLatestVersion }}"
+          title: "fix: Bump MSRV from ${{ steps.rust-versions.outputs.latest }} to ${{ env.officialTargetVersion }}"
           body: |
             - [ ] I have triggered CI on this PR (either close & reopen this PR in Github UI, or `git commit -m "run ci" --allow-empty && git push`)
