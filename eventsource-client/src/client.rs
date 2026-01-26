@@ -141,9 +141,9 @@ impl ClientBuilder {
 
     /// Set the Authorization header with the calculated basic authentication value.
     pub fn basic_auth(self, username: &str, password: &str) -> Result<ClientBuilder> {
-        let auth = format!("{}:{}", username, password);
+        let auth = format!("{username}:{password}");
         let encoded = BASE64_STANDARD.encode(auth);
-        let value = format!("Basic {}", encoded);
+        let value = format!("Basic {encoded}");
 
         self.header("Authorization", &value)
     }
@@ -477,7 +477,7 @@ where
                 }
                 StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
                     Ok(resp) => {
-                        debug!("HTTP response: {:#?}", resp);
+                        debug!("HTTP response: {resp:#?}");
 
                         if resp.status().is_success() {
                             self.as_mut().project().retry_strategy.reset(Instant::now());
@@ -544,7 +544,7 @@ where
                     }
                     Err(e) => {
                         // This happens when the server is unreachable, e.g. connection refused.
-                        warn!("request returned an error: {}", e);
+                        warn!("request returned an error: {e}");
                         if !*retry {
                             self.as_mut().project().state.set(State::StreamClosed);
                             return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
@@ -645,7 +645,7 @@ fn uri_from_header(maybe_header: &Option<HeaderValue>) -> Result<Uri> {
 }
 
 fn delay(dur: Duration, description: &str) -> Sleep {
-    info!("Waiting {:?} before {}", dur, description);
+    info!("Waiting {dur:?} before {description}");
     tokio::time::sleep(dur)
 }
 
@@ -679,7 +679,7 @@ mod tests {
             .expect("failed to add authentication");
 
         let actual = builder.headers.get("Authorization");
-        let expected = HeaderValue::from_str(format!("Basic {}", expected).as_str())
+        let expected = HeaderValue::from_str(format!("Basic {expected}").as_str())
             .expect("unable to create expected header");
 
         assert_eq!(Some(&expected), actual);
@@ -697,7 +697,7 @@ mod tests {
         ReconnectOptionsBuilder, ReconnectingRequest,
     };
 
-    const INVALID_URI: &'static str = "http://mycrazyunexsistenturl.invaliddomainext";
+    const INVALID_URI: &str = "http://mycrazyunexsistenturl.invaliddomainext";
 
     #[test_case(INVALID_URI, false, |state| matches!(state, State::StreamClosed))]
     #[test_case(INVALID_URI, true, |state| matches!(state, State::WaitingToReconnect(_)))]

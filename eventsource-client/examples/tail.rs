@@ -47,8 +47,8 @@ fn tail_events(client: impl es::Client) -> impl Stream<Item = Result<(), ()>> {
                 println!("got an event: {}\n{}", ev.event_type, ev.data)
             }
             es::SSE::Comment(comment) => {
-                println!("got a comment: \n{}", comment)
+                println!("got a comment: \n{comment}")
             }
         })
-        .map_err(|err| eprintln!("error streaming events: {:?}", err))
+        .map_err(|err| eprintln!("error streaming events: {err:?}"))
 }

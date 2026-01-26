@@ -47,7 +47,7 @@ impl Inner {
                 Ok(None) => break,
                 Err(e) => {
                     let failure = EventType::Error {
-                        error: format!("Error: {:?}", e),
+                        error: format!("Error: {e:?}"),
                     };
 
                     if !self.send_message(failure, &client).await {
@@ -62,7 +62,7 @@ impl Inner {
         let json = match serde_json::to_string(&event_type) {
             Ok(s) => s,
             Err(e) => {
-                error!("Failed to json encode event type {:?}", e);
+                error!("Failed to json encode event type {e:?}");
                 return false;
             }
         };
@@ -73,7 +73,7 @@ impl Inner {
 
         match client
             .post(format!("{}/{}", self.callback_url, counter_val))
-            .body(format!("{}\n", json))
+            .body(format!("{json}\n"))
             .send()
             .await
         {
@@ -82,7 +82,7 @@ impl Inner {
                 *counter = counter_val + 1
             }
             Err(e) => {
-                error!("Failed to send post back to test harness {:?}", e);
+                error!("Failed to send post back to test harness {e:?}");
                 return false;
             }
         };
@@ -93,7 +93,7 @@ impl Inner {
     fn build_client(config: &Config) -> Result<Box<dyn es::Client>, String> {
         let mut client_builder = match es::ClientBuilder::for_url(&config.stream_url) {
             Ok(cb) => cb,
-            Err(e) => return Err(format!("Failed to create client builder {:?}", e)),
+            Err(e) => return Err(format!("Failed to create client builder {e:?}")),
         };
 
         let mut reconnect_options = es::ReconnectOptions::reconnect(true);
@@ -122,7 +122,7 @@ impl Inner {
             for (name, value) in headers {
                 client_builder = match client_builder.header(name, value) {
                     Ok(cb) => cb,
-                    Err(e) => return Err(format!("Unable to set header {:?}", e)),
+                    Err(e) => return Err(format!("Unable to set header {e:?}")),
                 };
             }
         }

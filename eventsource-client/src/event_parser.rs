@@ -186,7 +186,7 @@ impl EventParser {
     }
 
     pub fn process_bytes(&mut self, bytes: Bytes) -> Result<()> {
-        trace!("Parsing bytes {:?}", bytes);
+        trace!("Parsing bytes {bytes:?}");
         // We get bytes from the underlying stream in chunks.  Decoding a chunk has two phases:
         // decode the chunk into lines, and decode the lines into events.
         //
@@ -255,7 +255,7 @@ impl EventParser {
                             Ok(retry) => {
                                 event_data.retry = Some(retry);
                             }
-                            _ => debug!("Failed to parse {:?} into retry value", value),
+                            _ => debug!("Failed to parse {value:?} into retry value"),
                         };
                     }
                 }
@@ -424,7 +424,7 @@ mod tests {
 
         match parse_field(b"\x80: invalid UTF-8") {
             Err(InvalidLine(msg)) => assert!(msg.contains("Utf8Error")),
-            res => panic!("expected InvalidLine error, got {:?}", res),
+            res => panic!("expected InvalidLine error, got {res:?}"),
         }
     }
 
@@ -719,8 +719,8 @@ mod tests {
     }
 
     fn read_contents_from_file(name: &str) -> Vec<u8> {
-        std::fs::read(format!("test-data/{}", name))
-            .unwrap_or_else(|_| panic!("couldn't read {}", name))
+        std::fs::read(format!("test-data/{name}"))
+            .unwrap_or_else(|_| panic!("couldn't read {name}"))
     }
 
     proptest! {
