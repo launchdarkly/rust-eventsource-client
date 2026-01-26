@@ -20,7 +20,7 @@ jobs:
 
       - name: Setup rust tooling
         run: |
-          rustup override set 1.83
+          rustup override set 1.88
           rustup component add rustfmt clippy
 
       - uses: ./.github/actions/ci
