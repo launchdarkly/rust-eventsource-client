@@ -45,11 +45,11 @@ jobs:
         run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
       - name: Update rust-versions.env and Cargo.toml
-        if: steps.rust-versions.outputs.latest != env.officialTargetVersion
+        if: steps.rust-versions.outputs.target != env.officialTargetVersion
         id: update-rust-versions
         run: |
           # Update the versions file
-          sed -i -e "s#latest=[^ ]*#latest=${{ env.officialTargetVersion }}#g" \
+          sed -i -e "s#target=[^ ]*#target=${{ env.officialTargetVersion }}#g" \
                   ./.github/variables/rust-versions.env
 
           # Update Cargo.toml rust-version field
@@ -67,6 +67,6 @@ jobs:
           branch: "launchdarklyreleasebot/update-to-rust${{ env.officialTargetVersion }}"
           author: "LaunchDarklyReleaseBot <LaunchDarklyReleaseBot@launchdarkly.com>"
           committer: "LaunchDarklyReleaseBot <LaunchDarklyReleaseBot@launchdarkly.com>"
-          title: "fix: Bump MSRV from ${{ steps.rust-versions.outputs.latest }} to ${{ env.officialTargetVersion }}"
+          title: "fix: Bump MSRV from ${{ steps.rust-versions.outputs.target }} to ${{ env.officialTargetVersion }}"
           body: |
             - [ ] I have triggered CI on this PR (either close & reopen this PR in Github UI, or `git commit -m "run ci" --allow-empty && git push`)
