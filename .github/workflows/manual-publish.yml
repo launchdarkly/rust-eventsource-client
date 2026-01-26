@@ -17,9 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Get Rust version
+        id: rust-version
+        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
+
       - name: Setup rust tooling
         run: |
-          rustup override set 1.88
+          rustup override set ${{ steps.rust-version.outputs.latest }}
           rustup component add rustfmt clippy
 
       - uses: ./.github/actions/ci

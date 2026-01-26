@@ -21,10 +21,15 @@ jobs:
         with:
           fetch-depth: 0 # If you only need the current version keep this.
 
+      - name: Get Rust version
+        if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
+        id: rust-version
+        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
+
       - name: Setup rust tooling
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
         run: |
-          rustup override set 1.88
+          rustup override set ${{ steps.rust-version.outputs.latest }}
           rustup component add rustfmt clippy
 
       - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.2.0
