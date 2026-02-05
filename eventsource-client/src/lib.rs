@@ -56,6 +56,7 @@ mod event_parser;
 mod response;
 mod retry;
 mod transport;
+
 #[cfg(feature = "hyper")]
 mod transport_hyper;
 
