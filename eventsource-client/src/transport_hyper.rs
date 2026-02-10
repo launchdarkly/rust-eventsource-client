@@ -47,6 +47,7 @@ use hyper_http_proxy::{Intercept, Proxy, ProxyConnector};
 use hyper_timeout::TimeoutConnector;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::rt::TokioExecutor;
+use no_proxy::NoProxy;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -246,7 +247,7 @@ impl HyperTransportBuilder {
     /// This is the default behavior if no proxy configuration method is called.
     ///
     /// The transport will check `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables to determine proxy settings.
-    /// Uppercase variants take precedence over lowercase.
+    /// Lowercase variants take precedence over uppercase.
     ///
     /// `NO_PROXY` is respected to bypass the proxy for specified hosts.
     ///
@@ -408,7 +409,10 @@ impl HyperTransportBuilder {
                 let https_proxy = std::env::var("https_proxy")
                     .or_else(|_| std::env::var("HTTPS_PROXY"))
                     .unwrap_or_default();
-                let no_proxy = NoProxyMatcher::from_env();
+                let no_proxy = std::env::var("no_proxy")
+                    .or_else(|_| std::env::var("NO_PROXY"))
+                    .unwrap_or_default();
+                let no_proxy = NoProxy::from(no_proxy);
 
                 if !https_proxy.is_empty() {
                     let https_uri = https_proxy
@@ -489,7 +493,7 @@ enum ProxyConfig {
     /// Automatically detect proxy from environment variables (default).
     ///
     /// Checks `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables.
-    /// Uppercase variants take precedence over lowercase.
+    /// Lowercase variants take precedence over uppercase.
     Auto,
 
     /// Explicitly disable proxy support.
@@ -507,78 +511,6 @@ enum ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         ProxyConfig::Auto
-    }
-}
-
-#[derive(Debug, Clone)]
-struct NoProxyMatcher {
-    // The combination of match_all and parts determines whether we should match all, match none,
-    // or match some.
-    //
-    // If match_all is true, we match all hosts (i.e., no_proxy includes "*")
-    // If match_all is false and parts is None, we match no hosts (i.e., no_proxy is empty).
-    // If match_all is false and parts is Some, we match based on the parts.
-    match_all: bool,
-    parts: Option<Vec<String>>,
-}
-
-impl NoProxyMatcher {
-    fn from_env() -> Self {
-        let no_proxy = std::env::var("no_proxy")
-            .or_else(|_| std::env::var("NO_PROXY"))
-            .unwrap_or_default();
-
-        if no_proxy.is_empty() {
-            return Self::default();
-        }
-
-        let parts: Vec<String> = no_proxy
-            .split(',')
-            .map(|part| part.trim())
-            .filter(|part| !part.is_empty())
-            .map(String::from)
-            .collect();
-
-        let match_all = parts.iter().any(|part| part == "*");
-
-        Self {
-            match_all,
-            parts: if match_all { None } else { Some(parts) },
-        }
-    }
-
-    /// Check if the given host matches the no_proxy rules. If this function returns true, the
-    /// proxy should be bypassed.
-    fn matches(&self, host: &str) -> bool {
-        if self.match_all {
-            return true;
-        }
-
-        if let Some(parts) = &self.parts {
-            for part in parts {
-                if host.ends_with(part) {
-                    return true;
-                }
-
-                if let Some(trimmed) = part.strip_prefix('.') {
-                    if host == trimmed {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-}
-
-impl Default for NoProxyMatcher {
-    /// The default configuration matches nothing.
-    fn default() -> Self {
-        Self {
-            match_all: false,
-            parts: None,
-        }
     }
 }
 
