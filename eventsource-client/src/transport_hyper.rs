@@ -93,7 +93,6 @@ impl HyperTransport {
     /// This creates a basic HTTP-only client that supports both HTTP/1 and HTTP/2.
     /// For HTTPS support or timeout configuration, use [`HyperTransport::builder()`].
     pub fn new() -> Result<Self, std::io::Error> {
-        //let client = HyperTransportBuilder::default().build_http();
         let connector = hyper_util::client::legacy::connect::HttpConnector::new();
         let timeout_connector = TimeoutConnector::new(connector);
         let proxy_connector = ProxyConnector::new(timeout_connector)?;
