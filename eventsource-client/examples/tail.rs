@@ -18,6 +18,7 @@ use std::{env, process, time::Duration};
 use eventsource_client as es;
 
 #[tokio::main]
+#[allow(clippy::result_large_err)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 

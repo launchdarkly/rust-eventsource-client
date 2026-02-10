@@ -2,6 +2,14 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.16.1](https://github.com/launchdarkly/rust-eventsource-client/compare/0.16.0...0.16.1) (2026-01-26)
+
+
+### Bug Fixes
+
+* Bump MSRV from 1.83 to 1.88 ([#110](https://github.com/launchdarkly/rust-eventsource-client/issues/110)) ([94cdd71](https://github.com/launchdarkly/rust-eventsource-client/commit/94cdd716bbcf0fc552b7a470142ccad9149848aa))
+* Bump MSRV from 1.88 to 1.91 ([#112](https://github.com/launchdarkly/rust-eventsource-client/issues/112)) ([78423ab](https://github.com/launchdarkly/rust-eventsource-client/commit/78423abfa406550d9270fba33aebc25e257b0216))
+
 ## [0.16.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.15.1...0.16.0) (2025-12-17)
 
 

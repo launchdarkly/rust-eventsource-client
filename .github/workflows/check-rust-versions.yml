@@ -1,0 +1,72 @@
+name: Check Supported Rust Versions
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+
+jobs:
+  check-rust-eol:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.parse.outputs.target }}
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        # Perform a GET request to endoflife.date for the Rust language. The response
+        # contains all Rust releases; we're interested in the 2nd index (antepenultimate).
+      - name: Fetch officially supported Rust versions
+        uses: JamesIves/fetch-api-data-action@396ebea7d13904824f85b892b1616985f847301c
+        with:
+          endpoint: https://endoflife.date/api/rust.json
+          configuration: '{ "method": "GET" }'
+          debug: true
+        # Parse the response JSON and insert into environment variables for the next step.
+        # We use the antepenultimate (third most recent) version as our target.
+      - name: Parse officially supported Rust versions
+        id: parse
+        run: |
+          echo "target=${{ fromJSON(env.fetch-api-data)[2].cycle }}" >> $GITHUB_OUTPUT
+
+  create-prs:
+    permissions:
+      contents: write
+      pull-requests: write
+    needs: check-rust-eol
+    runs-on: ubuntu-latest
+    env:
+      officialTargetVersion: ${{ needs.check-rust-eol.outputs.target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get current Rust version
+        id: rust-versions
+        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
+
+      - name: Update rust-versions.env and Cargo.toml
+        if: steps.rust-versions.outputs.target != env.officialTargetVersion
+        id: update-rust-versions
+        run: |
+          # Update the versions file
+          sed -i -e "s#target=[^ ]*#target=${{ env.officialTargetVersion }}#g" \
+                  ./.github/variables/rust-versions.env
+
+          # Update Cargo.toml rust-version field
+          sed -i -e "s#rust-version = \"[^\"]*\"#rust-version = \"${{ env.officialTargetVersion }}.0\"#g" \
+                  ./eventsource-client/Cargo.toml
+
+      - name: Create pull request
+        if: steps.update-rust-versions.outcome == 'success'
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            .github/variables/rust-versions.env
+            eventsource-client/Cargo.toml
+          branch: "launchdarklyreleasebot/update-to-rust${{ env.officialTargetVersion }}"
+          author: "LaunchDarklyReleaseBot <LaunchDarklyReleaseBot@launchdarkly.com>"
+          committer: "LaunchDarklyReleaseBot <LaunchDarklyReleaseBot@launchdarkly.com>"
+          title: "fix: Bump MSRV from ${{ steps.rust-versions.outputs.target }} to ${{ env.officialTargetVersion }}"
+          body: |
+            - [ ] I have triggered CI on this PR (either close & reopen this PR in Github UI, or `git commit -m "run ci" --allow-empty && git push`)
