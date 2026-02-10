@@ -243,6 +243,27 @@ impl HyperTransportBuilder {
         self
     }
 
+    /// Configure the transport to automatically detect proxy settings from environment variables.
+    /// This is the default behavior if no proxy configuration method is called.
+    ///
+    /// The transport will check `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables to determine proxy settings.
+    /// Uppercase variants take precedence over lowercase.
+    ///
+    /// `NO_PROXY` is respected to bypass the proxy for specified hosts.
+    ///
+    /// If both `HTTP_PROXY` and `HTTPS_PROXY` are set, the transport will route requests based on the scheme (http vs https).
+    /// If only `HTTP_PROXY` is set, all requests will route through that proxy regardless of scheme.
+    /// If neither is set, no proxy will be used.
+    pub fn auto_proxy(mut self) -> Self {
+        self.proxy_config = Some(ProxyConfig::Auto);
+        self
+    }
+
+    /// Configure the transport to use a custom proxy URL for all requests The URL should include
+    /// the scheme (http:// or https://) and can optionally include authentication info.
+    ///
+    /// When this is set, the transport will route all requests through the specified proxy,
+    /// regardless of environment variables.
     pub fn proxy_url(mut self, proxy_url: String) -> Self {
         self.proxy_config = Some(ProxyConfig::Custom(proxy_url));
         self
