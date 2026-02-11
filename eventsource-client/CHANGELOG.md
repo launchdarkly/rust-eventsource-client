@@ -2,6 +2,13 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.16.2](https://github.com/launchdarkly/rust-eventsource-client/compare/0.16.1...0.16.2) (2026-02-11)
+
+
+### Bug Fixes
+
+* Support stripping initial UTF-8 BOM header ([#114](https://github.com/launchdarkly/rust-eventsource-client/issues/114)) ([6697220](https://github.com/launchdarkly/rust-eventsource-client/commit/6697220d7c0a78dc985835dbcd76ac35ee4442d4))
+
 ## [0.16.1](https://github.com/launchdarkly/rust-eventsource-client/compare/0.16.0...0.16.1) (2026-01-26)
 
 
