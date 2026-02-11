@@ -18,7 +18,7 @@ use std::{
     fmt::{self, Debug, Formatter},
     future::Future,
     io::ErrorKind,
-    pin::{pin, Pin},
+    pin::Pin,
     str::FromStr,
     task::{Context, Poll},
     time::{Duration, Instant},

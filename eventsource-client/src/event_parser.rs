@@ -142,6 +142,32 @@ fn parse_value(value: &[u8]) -> Result<&str> {
     from_utf8(value).map_err(|e| Error::InvalidLine(format!("malformed value: {e:?}")))
 }
 
+// A state machine for handling the BOM header.
+#[derive(Debug)]
+enum BomHeaderState {
+    Parsing(Vec<u8>),
+    Consumed,
+}
+
+const BOM_HEADER: &[u8] = b"\xEF\xBB\xBF";
+
+// Try to consume the BOM header from the given bytes.
+// If the BOM header is found, return the remaining bytes, otherwise return the origin buffer.
+// Return `None` if we cannot determine whether the BOM header is present.
+fn try_consume_bom_header(buf: &[u8]) -> Option<&[u8]> {
+    if buf.len() < BOM_HEADER.len() {
+        if BOM_HEADER.starts_with(buf) {
+            None
+        } else {
+            Some(buf)
+        }
+    } else if buf.starts_with(BOM_HEADER) {
+        Some(&buf[BOM_HEADER.len()..])
+    } else {
+        Some(buf)
+    }
+}
+
 #[pin_project]
 #[must_use = "streams do nothing unless polled"]
 pub struct EventParser {
@@ -159,6 +185,8 @@ pub struct EventParser {
     /// the last-seen event ID; events without an ID will take on this value until it is updated.
     last_event_id: Option<String>,
     sse: VecDeque<SSE>,
+    /// state machine for handling the BOM header
+    bom_header_state: BomHeaderState,
 }
 
 impl EventParser {
@@ -170,6 +198,7 @@ impl EventParser {
             event_data: None,
             last_event_id: None,
             sse: VecDeque::with_capacity(3),
+            bom_header_state: BomHeaderState::Parsing(Vec::new()),
         }
     }
 
@@ -187,6 +216,24 @@ impl EventParser {
 
     pub fn process_bytes(&mut self, bytes: Bytes) -> Result<()> {
         trace!("Parsing bytes {bytes:?}");
+
+        // According to the SSE spec, a BOM header may be present at the beginning of the stream,
+        // which must be stripped before the message processing.
+        let bytes_to_process =
+            if let BomHeaderState::Parsing(header_buf) = &mut self.bom_header_state {
+                header_buf.extend_from_slice(&bytes);
+                if let Some(rest) = try_consume_bom_header(header_buf) {
+                    let owned_rest = rest.to_vec();
+                    self.bom_header_state = BomHeaderState::Consumed;
+                    // Once the BOM header is consumed, we can process the rest of the bytes.
+                    Bytes::from_owner(owned_rest)
+                } else {
+                    return Ok(());
+                }
+            } else {
+                bytes
+            };
+
         // We get bytes from the underlying stream in chunks.  Decoding a chunk has two phases:
         // decode the chunk into lines, and decode the lines into events.
         //
@@ -196,8 +243,7 @@ impl EventParser {
         // (empty-line-terminated) before returning it. So we buffer lines between poll()
         // invocations, and begin by processing any incomplete events from previous invocations,
         // before requesting new input from the underlying stream and processing that.
-
-        self.decode_and_buffer_lines(bytes);
+        self.decode_and_buffer_lines(bytes_to_process);
         self.parse_complete_lines_into_event()?;
 
         Ok(())
@@ -721,6 +767,36 @@ mod tests {
     fn read_contents_from_file(name: &str) -> Vec<u8> {
         std::fs::read(format!("test-data/{name}"))
             .unwrap_or_else(|_| panic!("couldn't read {name}"))
+    }
+
+    #[test]
+    fn test_event_parser_with_bom_header_split_across_chunks() {
+        let mut parser = EventParser::new();
+        // First chunk: partial BOM
+        assert!(parser
+            .process_bytes(Bytes::from(b"\xEF\xBB".as_slice()))
+            .is_ok());
+        assert!(parser.get_event().is_none());
+        // Second chunk: rest of BOM + data
+        assert!(parser
+            .process_bytes(Bytes::from(b"\xBFdata: hello\n\n".as_slice()))
+            .is_ok());
+        assert_eq!(parser.get_event(), Some(event("message", "hello")));
+        assert!(parser.get_event().is_none());
+    }
+
+    #[test]
+    fn test_event_parser_second_bom_should_fail() {
+        let mut parser = EventParser::new();
+        // First event with BOM - should succeed
+        assert!(parser
+            .process_bytes(Bytes::from(b"\xEF\xBB\xBFdata: first\n\n".as_slice()))
+            .is_ok());
+        assert_eq!(parser.get_event(), Some(event("message", "first")));
+
+        // Second event with BOM - should fail (only first message can have BOM)
+        let result = parser.process_bytes(Bytes::from(b"\xEF\xBB\xBFdata: second\n\n".as_slice()));
+        assert!(result.is_err());
     }
 
     proptest! {
