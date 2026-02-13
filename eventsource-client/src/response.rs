@@ -1,6 +1,7 @@
 use http::{HeaderMap, HeaderValue, StatusCode};
 
-use crate::{ByteStream, HeaderError};
+use crate::HeaderError;
+use launchdarkly_sdk_transport::ByteStream;
 
 /// Represents an error response body as a stream of bytes.
 ///

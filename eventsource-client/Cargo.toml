@@ -20,17 +20,7 @@ tokio = { version = "1.17.0", features = ["time"] }
 rand = "0.8.5"
 base64 = "0.22.1"
 
-#
-# Dependencies for hyper transport
-#
-hyper = { version = "1.0", features = ["client", "http1", "http2"], optional = true }
-hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"], optional = true }
-http-body-util = { version = "0.1", optional = true }
-hyper-http-proxy = { version = "1.1.0", optional = true }
-hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12", "webpki-roots"], optional = true }
-hyper-timeout = { version = "0.5", optional = true }
-tower = { version = "0.4", optional = true }
-no-proxy = { version = "0.3.6", default-features = false }
+launchdarkly-sdk-transport = { git = "https://github.com/launchdarkly/rust-sdk-transport.git", branch = "main" }
 
 [dev-dependencies]
 env_logger = "0.10.0"
@@ -43,5 +33,5 @@ proptest = "1.0.0"
 
 [features]
 default = ["hyper"]
-hyper = ["dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:hyper-timeout", "dep:tower", "dep:hyper-http-proxy"]
-hyper-rustls = ["hyper", "dep:hyper-rustls"]
+hyper = ["launchdarkly-sdk-transport/hyper"]
+hyper-rustls = ["hyper", "launchdarkly-sdk-transport/hyper-rustls"]

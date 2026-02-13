@@ -1,5 +1,5 @@
 use crate::response::{ErrorBody, Response};
-use crate::TransportError;
+use launchdarkly_sdk_transport::TransportError;
 
 /// Error type for invalid response headers encountered in ResponseDetails.
 #[derive(Debug)]

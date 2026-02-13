@@ -6,4 +6,4 @@ runs:
   steps:
     - name: Build Documentation
       shell: bash
-      run: cargo doc --no-deps -p eventsource-client
+      run: cargo doc --no-deps --all-features -p eventsource-client

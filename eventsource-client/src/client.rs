@@ -21,12 +21,12 @@ use tokio::time::Sleep;
 use crate::{
     config::ReconnectOptions,
     response::{ErrorBody, Response},
-    {ByteStream, HttpTransport, ResponseFuture},
 };
 use crate::{
     error::{Error, Result},
     event_parser::ConnectionDetails,
 };
+use launchdarkly_sdk_transport::{ByteStream, HttpTransport, ResponseFuture};
 
 use crate::event_parser::EventParser;
 use crate::event_parser::SSE;
@@ -313,7 +313,7 @@ impl<T: HttpTransport> ReconnectingRequest<T> {
         // Include the request body if set. Most SSE requests use GET and will have None,
         // but some implementations (e.g., using REPORT method) may include a body.
         let request = request_builder
-            .body(self.props.body.clone())
+            .body(self.props.body.clone().map(|b| b.into()))
             .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
         Ok(self.transport.request(request))
@@ -573,7 +573,7 @@ fn delay(dur: Duration, description: &str) -> Sleep {
 
 mod private {
     use crate::client::ClientImpl;
-    use crate::HttpTransport;
+    use launchdarkly_sdk_transport::HttpTransport;
 
     pub trait Sealed {}
     impl<T: HttpTransport> Sealed for ClientImpl<T> {}
@@ -618,8 +618,8 @@ mod tests {
     use crate::{
         client::{RequestProps, State},
         ReconnectOptionsBuilder, ReconnectingRequest,
-        {ByteStream, HttpTransport, ResponseFuture, TransportError},
     };
+    use launchdarkly_sdk_transport::{ByteStream, HttpTransport, ResponseFuture, TransportError};
 
     // Mock transport for testing
     #[derive(Clone)]
@@ -634,7 +634,7 @@ mod tests {
     }
 
     impl HttpTransport for MockTransport {
-        fn request(&self, _request: http::Request<Option<String>>) -> ResponseFuture {
+        fn request(&self, _request: http::Request<Option<Bytes>>) -> ResponseFuture {
             if self.fail_request {
                 // Simulate a connection error
                 Box::pin(async {

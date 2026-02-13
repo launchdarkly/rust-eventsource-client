@@ -1,6 +1,12 @@
 name: CI Workflow
 description: 'Shared CI workflow.'
 
+inputs:
+  feature-flags:
+    description: 'Cargo feature flags to pass to test and clippy commands'
+    required: false
+    default: ''
+
 runs:
   using: composite
   steps:
@@ -10,15 +16,15 @@ runs:
 
     - name: Run tests
       shell: bash
-      run: cargo test --all-features -p eventsource-client
+      run: cargo test ${{ inputs.feature-flags }} -p eventsource-client
 
     - name: Run slower integration tests
       shell: bash
-      run: cargo test --all-features -p eventsource-client --lib -- --ignored
+      run: cargo test ${{ inputs.feature-flags }} -p eventsource-client --lib -- --ignored
 
     - name: Run clippy checks
       shell: bash
-      run: cargo clippy --all-features -p eventsource-client -- -D warnings
+      run: cargo clippy ${{ inputs.feature-flags }} -p eventsource-client -- -D warnings
 
     - name: Build contract tests
       shell: bash
