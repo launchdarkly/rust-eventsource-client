@@ -59,7 +59,7 @@ async fn run_with_http(url: &str, auth_header: &str) -> Result<(), Box<dyn std::
     let transport = es::HyperTransport::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
-        .build_http();
+        .build_http()?;
 
     let client = es::ClientBuilder::for_url(url)?
         .header("Authorization", auth_header)?
@@ -85,7 +85,7 @@ async fn run_with_https(url: &str, auth_header: &str) -> Result<(), Box<dyn std:
     let transport = es::HyperTransport::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
-        .build_https();
+        .build_https()?;
 
     let client = es::ClientBuilder::for_url(url)?
         .header("Authorization", auth_header)?

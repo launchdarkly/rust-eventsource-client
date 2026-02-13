@@ -9,7 +9,7 @@
 //! use eventsource_client::{ClientBuilder, HyperTransport};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let transport = HyperTransport::new();
+//! let transport = HyperTransport::new()?;
 //! let client = ClientBuilder::for_url("https://example.com/stream")?
 //!     .build_with_transport(transport);
 //! # Ok(())
@@ -30,7 +30,7 @@
 //! let transport = HyperTransport::builder()
 //!     .connect_timeout(Duration::from_secs(10))
 //!     .read_timeout(Duration::from_secs(30))
-//!     .build_http();
+//!     .build_http()?;
 //!
 //! let client = ClientBuilder::for_url("https://example.com/stream")?
 //!     .build_with_transport(transport);
@@ -40,11 +40,14 @@
 
 use crate::{ByteStream, HttpTransport, TransportError};
 use bytes::Bytes;
+use http::Uri;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::Incoming;
+use hyper_http_proxy::{Intercept, Proxy, ProxyConnector};
 use hyper_timeout::TimeoutConnector;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::rt::TokioExecutor;
+use no_proxy::NoProxy;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -70,7 +73,7 @@ use std::time::Duration;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create transport with default HTTP connector
-/// let transport = HyperTransport::new();
+/// let transport = HyperTransport::new()?;
 ///
 /// // Build SSE client
 /// let client = ClientBuilder::for_url("https://example.com/stream")?
@@ -79,31 +82,10 @@ use std::time::Duration;
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct HyperTransport<C = TimeoutConnector<hyper_util::client::legacy::connect::HttpConnector>>
-{
+pub struct HyperTransport<
+    C = ProxyConnector<TimeoutConnector<hyper_util::client::legacy::connect::HttpConnector>>,
+> {
     client: HyperClient<C, BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>>,
-}
-
-/// Builder for configuring a [`HyperTransport`].
-///
-/// This builder allows you to configure timeouts and choose between HTTP and HTTPS connectors.
-///
-/// # Example
-///
-/// ```no_run
-/// use eventsource_client::HyperTransport;
-/// use std::time::Duration;
-///
-/// let transport = HyperTransport::builder()
-///     .connect_timeout(Duration::from_secs(10))
-///     .read_timeout(Duration::from_secs(30))
-///     .build_http();
-/// ```
-#[derive(Default)]
-pub struct HyperTransportBuilder {
-    connect_timeout: Option<Duration>,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
 }
 
 impl HyperTransport {
@@ -111,12 +93,13 @@ impl HyperTransport {
     ///
     /// This creates a basic HTTP-only client that supports both HTTP/1 and HTTP/2.
     /// For HTTPS support or timeout configuration, use [`HyperTransport::builder()`].
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, std::io::Error> {
         let connector = hyper_util::client::legacy::connect::HttpConnector::new();
         let timeout_connector = TimeoutConnector::new(connector);
-        let client = HyperClient::builder(TokioExecutor::new()).build(timeout_connector);
+        let proxy_connector = ProxyConnector::new(timeout_connector)?;
+        let client = HyperClient::builder(TokioExecutor::new()).build(proxy_connector);
 
-        Self { client }
+        Ok(Self { client })
     }
 
     /// Create a new HyperTransport with HTTPS support using rustls
@@ -133,7 +116,7 @@ impl HyperTransport {
     /// use eventsource_client::{ClientBuilder, HyperTransport};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let transport = HyperTransport::new_https();
+    /// let transport = HyperTransport::new_https()?;
     /// let client = ClientBuilder::for_url("https://example.com/stream")?
     ///     .build_with_transport(transport);
     /// # Ok(())
@@ -141,10 +124,17 @@ impl HyperTransport {
     /// # }
     /// ```
     #[cfg(feature = "hyper-rustls")]
-    pub fn new_https() -> HyperTransport<
-        TimeoutConnector<
-            hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    pub fn new_https() -> Result<
+        HyperTransport<
+            ProxyConnector<
+                TimeoutConnector<
+                    hyper_rustls::HttpsConnector<
+                        hyper_util::client::legacy::connect::HttpConnector,
+                    >,
+                >,
+            >,
         >,
+        std::io::Error,
     > {
         HyperTransport::builder().build_https()
     }
@@ -166,138 +156,6 @@ impl HyperTransport {
     /// ```
     pub fn builder() -> HyperTransportBuilder {
         HyperTransportBuilder::default()
-    }
-}
-
-impl HyperTransportBuilder {
-    /// Set a connect timeout for establishing connections
-    ///
-    /// This timeout applies when establishing the TCP connection to the server.
-    /// There is no connect timeout by default.
-    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
-        self.connect_timeout = Some(timeout);
-        self
-    }
-
-    /// Set a read timeout for reading from connections
-    ///
-    /// This timeout applies when reading data from the connection.
-    /// There is no read timeout by default.
-    pub fn read_timeout(mut self, timeout: Duration) -> Self {
-        self.read_timeout = Some(timeout);
-        self
-    }
-
-    /// Set a write timeout for writing to connections
-    ///
-    /// This timeout applies when writing data to the connection.
-    /// There is no write timeout by default.
-    pub fn write_timeout(mut self, timeout: Duration) -> Self {
-        self.write_timeout = Some(timeout);
-        self
-    }
-
-    /// Build with an HTTP connector
-    ///
-    /// Creates a transport that supports HTTP/1 and HTTP/2 over plain HTTP.
-    pub fn build_http(self) -> HyperTransport {
-        let connector = hyper_util::client::legacy::connect::HttpConnector::new();
-        self.build_with_connector(connector)
-    }
-
-    /// Build with an HTTPS connector using rustls
-    ///
-    /// Creates a transport that supports HTTP/1 and HTTP/2 over HTTPS using rustls.
-    /// This method is only available when the `hyper-rustls` feature is enabled.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # #[cfg(feature = "hyper-rustls")]
-    /// # {
-    /// use eventsource_client::HyperTransport;
-    /// use std::time::Duration;
-    ///
-    /// let transport = HyperTransport::builder()
-    ///     .connect_timeout(Duration::from_secs(10))
-    ///     .build_https();
-    /// # }
-    /// ```
-    #[cfg(feature = "hyper-rustls")]
-    pub fn build_https(
-        self,
-    ) -> HyperTransport<
-        TimeoutConnector<
-            hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-        >,
-    > {
-        use hyper_rustls::HttpsConnectorBuilder;
-
-        let connector = HttpsConnectorBuilder::new()
-            .with_native_roots()
-            .unwrap_or_else(|_| {
-                log::debug!("Falling back to webpki roots for HTTPS connector");
-                HttpsConnectorBuilder::new().with_webpki_roots()
-            })
-            .https_or_http()
-            .enable_http1()
-            .enable_http2()
-            .build();
-
-        self.build_with_connector(connector)
-    }
-
-    /// Build with a custom connector
-    ///
-    /// This allows you to provide your own connector implementation, which is useful for:
-    /// - Custom TLS configuration
-    /// - Proxy support
-    /// - Connection pooling customization
-    /// - Custom DNS resolution
-    ///
-    /// The connector will be automatically wrapped with a `TimeoutConnector` that applies
-    /// the configured timeout settings.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use eventsource_client::HyperTransport;
-    /// use hyper_util::client::legacy::connect::HttpConnector;
-    /// use std::time::Duration;
-    ///
-    /// let mut connector = HttpConnector::new();
-    /// // Configure the connector as needed
-    /// connector.set_nodelay(true);
-    ///
-    /// let transport = HyperTransport::builder()
-    ///     .read_timeout(Duration::from_secs(30))
-    ///     .build_with_connector(connector);
-    /// ```
-    pub fn build_with_connector<C>(self, connector: C) -> HyperTransport<TimeoutConnector<C>>
-    where
-        C: tower::Service<http::Uri> + Clone + Send + Sync + 'static,
-        C::Response: hyper_util::client::legacy::connect::Connection
-            + hyper::rt::Read
-            + hyper::rt::Write
-            + Send
-            + Unpin,
-        C::Future: Send + 'static,
-        C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    {
-        let mut timeout_connector = TimeoutConnector::new(connector);
-        timeout_connector.set_connect_timeout(self.connect_timeout);
-        timeout_connector.set_read_timeout(self.read_timeout);
-        timeout_connector.set_write_timeout(self.write_timeout);
-
-        let client = HyperClient::builder(TokioExecutor::new()).build(timeout_connector);
-
-        HyperTransport { client }
-    }
-}
-
-impl Default for HyperTransport {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -356,6 +214,306 @@ where
     }
 }
 
+/// Builder for configuring a [`HyperTransport`].
+///
+/// This builder allows you to configure timeouts and choose between HTTP and HTTPS connectors.
+///
+/// # Example
+///
+/// ```no_run
+/// use eventsource_client::HyperTransport;
+/// use std::time::Duration;
+///
+/// let transport = HyperTransport::builder()
+///     .connect_timeout(Duration::from_secs(10))
+///     .read_timeout(Duration::from_secs(30))
+///     .build_http();
+/// ```
+#[derive(Default)]
+pub struct HyperTransportBuilder {
+    connect_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
+    write_timeout: Option<Duration>,
+    proxy_config: Option<ProxyConfig>,
+}
+
+impl HyperTransportBuilder {
+    pub fn disable_proxy(mut self) -> Self {
+        self.proxy_config = Some(ProxyConfig::Disabled);
+        self
+    }
+
+    /// Configure the transport to automatically detect proxy settings from environment variables.
+    /// This is the default behavior if no proxy configuration method is called.
+    ///
+    /// The transport will check `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables to determine proxy settings.
+    /// Lowercase variants take precedence over uppercase.
+    ///
+    /// `NO_PROXY` is respected to bypass the proxy for specified hosts.
+    ///
+    /// If both `HTTP_PROXY` and `HTTPS_PROXY` are set, the transport will route requests based on the scheme (http vs https).
+    /// If only `HTTP_PROXY` is set, all requests will route through that proxy regardless of scheme.
+    /// If neither is set, no proxy will be used.
+    pub fn auto_proxy(mut self) -> Self {
+        self.proxy_config = Some(ProxyConfig::Auto);
+        self
+    }
+
+    /// Configure the transport to use a custom proxy URL for all requests The URL should include
+    /// the scheme (http:// or https://) and can optionally include authentication info.
+    ///
+    /// When this is set, the transport will route all requests through the specified proxy,
+    /// regardless of environment variables.
+    pub fn proxy_url(mut self, proxy_url: String) -> Self {
+        self.proxy_config = Some(ProxyConfig::Custom(proxy_url));
+        self
+    }
+
+    /// Set a connect timeout for establishing connections
+    ///
+    /// This timeout applies when establishing the TCP connection to the server.
+    /// There is no connect timeout by default.
+    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = Some(timeout);
+        self
+    }
+
+    /// Set a read timeout for reading from connections
+    ///
+    /// This timeout applies when reading data from the connection.
+    /// There is no read timeout by default.
+    pub fn read_timeout(mut self, timeout: Duration) -> Self {
+        self.read_timeout = Some(timeout);
+        self
+    }
+
+    /// Set a write timeout for writing to connections
+    ///
+    /// This timeout applies when writing data to the connection.
+    /// There is no write timeout by default.
+    pub fn write_timeout(mut self, timeout: Duration) -> Self {
+        self.write_timeout = Some(timeout);
+        self
+    }
+
+    /// Build with an HTTP connector
+    ///
+    /// Creates a transport that supports HTTP/1 and HTTP/2 over plain HTTP.
+    pub fn build_http(self) -> Result<HyperTransport, std::io::Error> {
+        let connector = hyper_util::client::legacy::connect::HttpConnector::new();
+        self.build_with_connector(connector)
+    }
+
+    /// Build with an HTTPS connector using rustls
+    ///
+    /// Creates a transport that supports HTTP/1 and HTTP/2 over HTTPS using rustls.
+    /// This method is only available when the `hyper-rustls` feature is enabled.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "hyper-rustls")]
+    /// # {
+    /// use eventsource_client::HyperTransport;
+    /// use std::time::Duration;
+    ///
+    /// let transport = HyperTransport::builder()
+    ///     .connect_timeout(Duration::from_secs(10))
+    ///     .build_https()
+    ///     .expect("failed to build HTTPS transport");
+    /// # }
+    /// ```
+    #[cfg(feature = "hyper-rustls")]
+    pub fn build_https(
+        self,
+    ) -> Result<
+        HyperTransport<
+            ProxyConnector<
+                TimeoutConnector<
+                    hyper_rustls::HttpsConnector<
+                        hyper_util::client::legacy::connect::HttpConnector,
+                    >,
+                >,
+            >,
+        >,
+        std::io::Error,
+    > {
+        use hyper_rustls::HttpsConnectorBuilder;
+
+        let connector = HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .unwrap_or_else(|_| {
+                log::debug!("Falling back to webpki roots for HTTPS connector");
+                HttpsConnectorBuilder::new().with_webpki_roots()
+            })
+            .https_or_http()
+            .enable_http1()
+            .enable_http2()
+            .build();
+
+        self.build_with_connector(connector)
+    }
+
+    /// Build with a custom connector
+    ///
+    /// This allows you to provide your own connector implementation, which is useful for:
+    /// - Custom TLS configuration
+    /// - Proxy support
+    /// - Connection pooling customization
+    /// - Custom DNS resolution
+    ///
+    /// The connector will be automatically wrapped with a `TimeoutConnector` that applies
+    /// the configured timeout settings.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use eventsource_client::HyperTransport;
+    /// use hyper_util::client::legacy::connect::HttpConnector;
+    /// use std::time::Duration;
+    ///
+    /// let mut connector = HttpConnector::new();
+    /// // Configure the connector as needed
+    /// connector.set_nodelay(true);
+    ///
+    /// let transport = HyperTransport::builder()
+    ///     .read_timeout(Duration::from_secs(30))
+    ///     .build_with_connector(connector);
+    /// ```
+    pub fn build_with_connector<C>(
+        self,
+        connector: C,
+    ) -> Result<HyperTransport<ProxyConnector<TimeoutConnector<C>>>, std::io::Error>
+    where
+        C: tower::Service<http::Uri> + Clone + Send + Sync + 'static,
+        C::Response: hyper_util::client::legacy::connect::Connection
+            + hyper::rt::Read
+            + hyper::rt::Write
+            + Send
+            + Unpin,
+        C::Future: Send + 'static,
+        C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        let mut timeout_connector = TimeoutConnector::new(connector);
+        timeout_connector.set_connect_timeout(self.connect_timeout);
+        timeout_connector.set_read_timeout(self.read_timeout);
+        timeout_connector.set_write_timeout(self.write_timeout);
+
+        let mut proxy_connector = ProxyConnector::new(timeout_connector)?;
+
+        match self.proxy_config {
+            Some(ProxyConfig::Auto) | None => {
+                let http_proxy = std::env::var("http_proxy")
+                    .or_else(|_| std::env::var("HTTP_PROXY"))
+                    .unwrap_or_default();
+                let https_proxy = std::env::var("https_proxy")
+                    .or_else(|_| std::env::var("HTTPS_PROXY"))
+                    .unwrap_or_default();
+                let no_proxy = std::env::var("no_proxy")
+                    .or_else(|_| std::env::var("NO_PROXY"))
+                    .unwrap_or_default();
+                let no_proxy = NoProxy::from(no_proxy);
+
+                if !https_proxy.is_empty() {
+                    let https_uri = https_proxy
+                        .parse::<Uri>()
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                    let no_proxy = no_proxy.clone();
+                    let custom: Intercept = Intercept::Custom(
+                        (move |schema: Option<&str>,
+                               host: Option<&str>,
+                               _port: Option<u16>|
+                              -> bool {
+                            // This function should only enforce validation when it matches
+                            // the schema of the proxy.
+                            if !matches!(schema, Some("https")) {
+                                return false;
+                            }
+
+                            match host {
+                                None => false,
+                                Some(h) => !no_proxy.matches(h),
+                            }
+                        })
+                        .into(),
+                    );
+                    let proxy = Proxy::new(custom, https_uri);
+                    proxy_connector.add_proxy(proxy);
+                }
+
+                if !http_proxy.is_empty() {
+                    let http_uri = http_proxy
+                        .parse::<Uri>()
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                    // If http_proxy is set but https_proxy is not, then all hosts are eligible to
+                    // route through the http_proxy.
+                    let proxy_all = https_proxy.is_empty();
+                    let custom: Intercept = Intercept::Custom(
+                        (move |schema: Option<&str>,
+                               host: Option<&str>,
+                               _port: Option<u16>|
+                              -> bool {
+                            if !proxy_all && matches!(schema, Some("https")) {
+                                return false;
+                            }
+
+                            match host {
+                                None => false,
+                                Some(h) => !no_proxy.matches(h),
+                            }
+                        })
+                        .into(),
+                    );
+                    let proxy = Proxy::new(custom, http_uri);
+                    proxy_connector.add_proxy(proxy);
+                }
+            }
+            Some(ProxyConfig::Disabled) => {
+                // No proxies will be added, so the client will connect directly
+            }
+            Some(ProxyConfig::Custom(url)) => {
+                let uri = url
+                    .parse::<Uri>()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                proxy_connector.add_proxy(Proxy::new(Intercept::All, uri));
+            }
+        };
+
+        let client = HyperClient::builder(TokioExecutor::new()).build(proxy_connector);
+
+        Ok(HyperTransport { client })
+    }
+}
+
+/// Proxy configuration for HyperTransport.
+///
+/// This determines whether and how the transport uses an HTTP/HTTPS proxy.
+#[derive(Debug, Clone)]
+enum ProxyConfig {
+    /// Automatically detect proxy from environment variables (default).
+    ///
+    /// Checks `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables.
+    /// Lowercase variants take precedence over uppercase.
+    Auto,
+
+    /// Explicitly disable proxy support.
+    ///
+    /// No proxy will be used even if environment variables are set.
+    Disabled,
+
+    /// Use a custom proxy URL.
+    ///
+    /// Format: `http://[user:pass@]host:port`
+    Custom(String),
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        ProxyConfig::Auto
+    }
+}
+
 /// Convert hyper's Incoming body to a Stream of Bytes
 fn body_to_stream(
     body: Incoming,
@@ -394,17 +552,10 @@ mod tests {
         drop(transport);
     }
 
-    #[test]
-    fn test_hyper_transport_default() {
-        let transport = HyperTransport::default();
-        // Verify Default trait implementation
-        drop(transport);
-    }
-
     #[cfg(feature = "hyper-rustls")]
     #[test]
     fn test_hyper_transport_new_https() {
-        let transport = HyperTransport::new_https();
+        let transport = HyperTransport::new_https().expect("transport failed to build");
         // If we can create it without panic, the test passes
         // This verifies the HTTPS connector with rustls is set up correctly
         drop(transport);
@@ -413,7 +564,7 @@ mod tests {
     #[test]
     fn test_builder_default() {
         let builder = HyperTransport::builder();
-        let transport = builder.build_http();
+        let transport = builder.build_http().expect("failed to build transport");
         // Verify we can build with default settings
         drop(transport);
     }
@@ -422,7 +573,8 @@ mod tests {
     fn test_builder_with_connect_timeout() {
         let transport = HyperTransport::builder()
             .connect_timeout(Duration::from_secs(5))
-            .build_http();
+            .build_http()
+            .expect("failed to build transport");
         // Verify we can build with connect timeout
         drop(transport);
     }
@@ -431,7 +583,8 @@ mod tests {
     fn test_builder_with_read_timeout() {
         let transport = HyperTransport::builder()
             .read_timeout(Duration::from_secs(10))
-            .build_http();
+            .build_http()
+            .expect("failed to build transport");
         // Verify we can build with read timeout
         drop(transport);
     }
@@ -440,7 +593,8 @@ mod tests {
     fn test_builder_with_write_timeout() {
         let transport = HyperTransport::builder()
             .write_timeout(Duration::from_secs(10))
-            .build_http();
+            .build_http()
+            .expect("failed to build transport");
         // Verify we can build with write timeout
         drop(transport);
     }
@@ -451,7 +605,8 @@ mod tests {
             .connect_timeout(Duration::from_secs(5))
             .read_timeout(Duration::from_secs(30))
             .write_timeout(Duration::from_secs(10))
-            .build_http();
+            .build_http()
+            .expect("failed to build transport");
         // Verify we can build with all timeouts configured
         drop(transport);
     }
@@ -462,7 +617,8 @@ mod tests {
         let transport = HyperTransport::builder()
             .connect_timeout(Duration::from_secs(5))
             .read_timeout(Duration::from_secs(30))
-            .build_https();
+            .build_https()
+            .expect("failed to build HTTPS transport");
         // Verify we can build HTTPS transport with timeouts
         drop(transport);
     }
@@ -481,14 +637,14 @@ mod tests {
 
     #[test]
     fn test_transport_is_clone() {
-        let transport = HyperTransport::new();
+        let transport = HyperTransport::new().expect("failed to build transport");
         let _cloned = transport.clone();
         // Verify HyperTransport implements Clone
     }
 
     #[tokio::test]
     async fn test_http_transport_trait_implemented() {
-        let transport = HyperTransport::new();
+        let transport = HyperTransport::new().expect("failed to build transport");
 
         // Create a basic request
         let request = Request::builder()
@@ -506,7 +662,7 @@ mod tests {
     #[tokio::test]
     async fn test_request_with_empty_body() {
         // This test verifies that we can construct a request with no body
-        let transport = HyperTransport::new();
+        let transport = HyperTransport::new().expect("failed to build transport");
 
         let request = Request::builder()
             .method(Method::GET)
@@ -521,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn test_request_with_string_body() {
         // This test verifies that we can construct a request with a string body
-        let transport = HyperTransport::new();
+        let transport = HyperTransport::new().expect("failed to build transport");
 
         let request = Request::builder()
             .method(Method::POST)
@@ -552,7 +708,8 @@ mod tests {
         let transport = HyperTransport::builder()
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(30))
-            .build_http();
+            .build_http()
+            .expect("failed to build transport");
 
         let request = Request::builder()
             .method(Method::GET)
@@ -583,7 +740,8 @@ mod tests {
         let transport = HyperTransport::builder()
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(30))
-            .build_https();
+            .build_https()
+            .expect("failed to build HTTPS transport");
 
         // Using example.com as it's highly reliable and well-maintained
         let request = Request::builder()
@@ -610,7 +768,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Run with: cargo test -- --ignored
     async fn test_integration_request_with_body() {
-        let transport = HyperTransport::new();
+        let transport = HyperTransport::new().expect("failed to build transport");
 
         let body_content = r#"{"test": "data"}"#;
         let request = Request::builder()
@@ -630,7 +788,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Run with: cargo test -- --ignored
     async fn test_integration_streaming_response() {
-        let transport = HyperTransport::new();
+        let transport = HyperTransport::new().expect("failed to build transport");
 
         let request = Request::builder()
             .method(Method::GET)
@@ -662,7 +820,8 @@ mod tests {
         // Use a non-routable IP to test connect timeout
         let transport = HyperTransport::builder()
             .connect_timeout(Duration::from_millis(100))
-            .build_http();
+            .build_http()
+            .expect("failed to build transport");
 
         let request = Request::builder()
             .method(Method::GET)
