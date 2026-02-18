@@ -28,12 +28,12 @@ runs:
 
     - name: Build contract tests
       shell: bash
-      run: make build-contract-tests
+      run: FEATURES="${{ inputs.feature-flags }}" make build-contract-tests
 
     - name: Start contract test service
       shell: bash
-      run: make start-contract-test-service-bg
+      run: FEATURES="${{ inputs.feature-flags }}" make start-contract-test-service-bg
 
     - name: Run contract tests
       shell: bash
-      run: make run-contract-tests
+      run: FEATURES="${{ inputs.feature-flags }}" make run-contract-tests

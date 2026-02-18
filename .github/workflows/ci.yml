@@ -22,12 +22,12 @@ jobs:
         features:
           - name: "default"
             flags: ""
-          - name: "no-features"
-            flags: "--no-default-features"
-          - name: "hyper"
-            flags: "--no-default-features --features hyper"
-          - name: "hyper-rustls"
-            flags: "--no-default-features --features hyper-rustls"
+          - name: "hyper-rustls-native-roots"
+            flags: "--no-default-features --features hyper-rustls-native-roots"
+          - name: "hyper-rustls-webpki-roots"
+            flags: "--no-default-features --features hyper-rustls-webpki-roots"
+          - name: "native-tls"
+            flags: "--no-default-features --features native-tls"
 
     name: CI (${{ matrix.features.name }})
 
@@ -58,12 +58,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get Rust version
-        id: rust-version
-        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
-
       - name: Setup rust tooling
-        run: |
-          rustup override set ${{ steps.rust-version.outputs.target }}
+        run: rustup override set nightly
 
-      - uses: ./.github/actions/build-docs
+      - name: Install cargo-docs-rs
+        run: cargo install cargo-docs-rs
+
+      - name: Build documentation
+        run: cargo docs-rs
