@@ -2,7 +2,7 @@ TEMP_TEST_OUTPUT=/tmp/contract-test-service.log
 CARGO_FLAGS ?= ""
 
 build-contract-tests:
-	@cargo build "$(CARGO_FLAGS)"
+	@cargo build $(CARGO_FLAGS)
 
 start-contract-test-service: build-contract-tests
 	@./target/debug/sse-test-api
