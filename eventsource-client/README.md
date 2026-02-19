@@ -9,31 +9,26 @@ This library provides a complete SSE protocol implementation with a built-in HTT
 [Server-Sent Events]: https://html.spec.whatwg.org/multipage/server-sent-events.html
 [EventSource]: https://developer.mozilla.org/en-US/docs/Web/API/EventSource
 
-## Requirements
-
-* Tokio async runtime
-* Enable the `hyper` feature for the built-in HTTP transport (enabled by default)
-* Optionally enable `hyper-rustls` for HTTPS support
-
 ## Quick Start
 
 ### 1. Add dependencies
 
 ```toml
 [dependencies]
-eventsource-client = { version = "0.17", features = ["hyper", "hyper-rustls"] }
+eventsource-client = { version = "0.17", features = ["hyper-rustls-native-roots"] }
 futures = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 **Features:**
 - `hyper` - Enables the built-in `HyperTransport` for HTTP support (enabled by default)
-- `hyper-rustls` - Adds HTTPS support via rustls (optional)
+- `hyper-rustls-native-roots`, `hyper-rustls-webpki-roots`, or `native-tls` - Adds HTTPS support via rustls (optional)
 
 ### 2. Use the client
 
 ```rust
-use eventsource_client::{ClientBuilder, HyperTransport, SSE};
+use eventsource_client::{ClientBuilder, SSE};
+use launchdarkly_sdk_transport::HyperTransport;
 use futures::TryStreamExt;
 use std::time::Duration;
 
@@ -71,12 +66,14 @@ The `tail` example demonstrates a complete SSE client using the built-in `HyperT
 
 **Run with HTTP:**
 ```bash
-cargo run --example tail --features hyper -- http://sse.dev/test "Bearer token"
+cargo run --example tail --features hyper -- http://live-test-scores.herokuapp.com/scores "Bearer token"
 ```
 
 **Run with HTTPS:**
 ```bash
-cargo run --example tail --features hyper,hyper-rustls -- https://sse.dev/test "Bearer token"
+cargo run --example tail --features hyper-rustls-native-roots -- https://live-test-scores.herokuapp.com/scores "Bearer token"
+cargo run --example tail --features hyper-rustls-webpki-roots -- https://live-test-scores.herokuapp.com/scores "Bearer token"
+cargo run --example tail --features native-tls -- https://live-test-scores.herokuapp.com/scores "Bearer token"
 ```
 
 The example shows:
@@ -84,7 +81,7 @@ The example shows:
 - Building an SSE client with authentication headers
 - Configuring automatic reconnection with exponential backoff
 - Handling different SSE event types (events, comments, connection status)
-- Proper error handling for HTTPS URLs without the `hyper-rustls` feature
+- Proper error handling for HTTPS URLs without the `hyper-rustls-native-roots` feature
 
 See [`examples/tail.rs`](https://github.com/launchdarkly/rust-eventsource-client/tree/main/eventsource-client/examples/tail.rs) for the complete implementation.
 
@@ -92,7 +89,7 @@ See [`examples/tail.rs`](https://github.com/launchdarkly/rust-eventsource-client
 
 * **Built-in HTTP transport** - Production-ready `HyperTransport` powered by hyper v1
 * **Configurable timeouts** - Connect, read, and write timeout support
-* **HTTPS support** - Optional rustls integration via the `hyper-rustls` feature
+* **HTTPS support** - Optional rustls integration via the `hyper-rustls-*` or `native-tls` features
 * **Pluggable transport** - Use a custom HTTP client if needed (reqwest, etc.)
 * **Tokio-based streaming** - Efficient async/await support
 * **Custom headers** - Full control over HTTP requests
@@ -106,9 +103,8 @@ See [`examples/tail.rs`](https://github.com/launchdarkly/rust-eventsource-client
 While the built-in `HyperTransport` works for most use cases, you can implement the `HttpTransport` trait to use your own HTTP client:
 
 ```rust
-use eventsource_client::{HttpTransport, ByteStream, TransportError};
-use std::pin::Pin;
-use std::future::Future;
+use launchdarkly_sdk_transport::{HttpTransport, Request, ResponseFuture};
+use bytes::Bytes;
 
 #[derive(Clone)]
 struct MyTransport {
@@ -116,10 +112,7 @@ struct MyTransport {
 }
 
 impl HttpTransport for MyTransport {
-    fn request(
-        &self,
-        request: http::Request<Option<String>>,
-    ) -> Pin<Box<dyn Future<Output = Result<http::Response<ByteStream>, TransportError>> + Send + Sync + 'static>> {
+    fn request(&self, request: Request<Option<Bytes>>) -> ResponseFuture {
         // Implement HTTP request handling
         // See the HttpTransport trait documentation for details
         todo!()

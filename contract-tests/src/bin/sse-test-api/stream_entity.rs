@@ -131,9 +131,22 @@ impl Inner {
             transport_builder = transport_builder.read_timeout(Duration::from_millis(timeout_ms));
         }
 
+        #[cfg(any(
+            feature = "hyper-rustls-native-roots",
+            feature = "hyper-rustls-webpki-roots",
+            feature = "native-tls"
+        ))]
         let transport = transport_builder
             .build_https()
             .map_err(|e| format!("Failed to build HTTPS transport: {e:?}"))?;
+        #[cfg(not(any(
+            feature = "hyper-rustls-native-roots",
+            feature = "hyper-rustls-webpki-roots",
+            feature = "native-tls"
+        )))]
+        let transport = transport_builder
+            .build_http()
+            .map_err(|e| format!("Failed to build HTTP transport: {e:?}"))?;
 
         Ok(Box::new(
             client_builder

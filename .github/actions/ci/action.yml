@@ -1,11 +1,11 @@
 name: CI Workflow
-description: 'Shared CI workflow.'
+description: "Shared CI workflow."
 
 inputs:
-  feature-flags:
-    description: 'Cargo feature flags to pass to test and clippy commands'
+  cargo-flags:
+    description: "Flags to pass to cargo commands."
     required: false
-    default: ''
+    default: ""
 
 runs:
   using: composite
@@ -16,24 +16,24 @@ runs:
 
     - name: Run tests
       shell: bash
-      run: cargo test ${{ inputs.feature-flags }} -p eventsource-client
+      run: cargo test ${{ inputs.cargo-flags }} -p eventsource-client
 
     - name: Run slower integration tests
       shell: bash
-      run: cargo test ${{ inputs.feature-flags }} -p eventsource-client --lib -- --ignored
+      run: cargo test ${{ inputs.cargo-flags }} -p eventsource-client --lib -- --ignored
 
     - name: Run clippy checks
       shell: bash
-      run: cargo clippy ${{ inputs.feature-flags }} -p eventsource-client -- -D warnings
+      run: cargo clippy ${{ inputs.cargo-flags }} -p eventsource-client -- -D warnings
 
     - name: Build contract tests
       shell: bash
-      run: make build-contract-tests
+      run: CARGO_FLAGS="${{ inputs.cargo-flags }}" make build-contract-tests
 
     - name: Start contract test service
       shell: bash
-      run: make start-contract-test-service-bg
+      run: CARGO_FLAGS="${{ inputs.cargo-flags }}" make start-contract-test-service-bg
 
     - name: Run contract tests
       shell: bash
-      run: make run-contract-tests
+      run: CARGO_FLAGS="${{ inputs.cargo-flags }}" make run-contract-tests

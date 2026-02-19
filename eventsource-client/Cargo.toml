@@ -20,7 +20,7 @@ tokio = { version = "1.17.0", features = ["time"] }
 rand = "0.8.5"
 base64 = "0.22.1"
 
-launchdarkly-sdk-transport = { git = "https://github.com/launchdarkly/rust-sdk-transport.git", branch = "main" }
+launchdarkly-sdk-transport = { version = "0.1.0" }
 
 [dev-dependencies]
 env_logger = "0.10.0"
@@ -38,4 +38,6 @@ required-features = ["hyper"]
 [features]
 default = ["hyper"]
 hyper = ["launchdarkly-sdk-transport/hyper"]
-hyper-rustls = ["hyper", "launchdarkly-sdk-transport/hyper-rustls"]
+native-tls = ["hyper", "launchdarkly-sdk-transport/native-tls"]
+hyper-rustls-native-roots = ["hyper", "launchdarkly-sdk-transport/hyper-rustls-native-roots"]
+hyper-rustls-webpki-roots = ["hyper", "launchdarkly-sdk-transport/hyper-rustls-webpki-roots"]

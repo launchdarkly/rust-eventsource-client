@@ -21,13 +21,13 @@ jobs:
       matrix:
         features:
           - name: "default"
-            flags: ""
-          - name: "no-features"
-            flags: "--no-default-features"
-          - name: "hyper"
-            flags: "--no-default-features --features hyper"
-          - name: "hyper-rustls"
-            flags: "--no-default-features --features hyper-rustls"
+            cargo-flags: ""
+          - name: "hyper-rustls-native-roots"
+            cargo-flags: "--no-default-features --features hyper-rustls-native-roots"
+          - name: "hyper-rustls-webpki-roots"
+            cargo-flags: "--no-default-features --features hyper-rustls-webpki-roots"
+          - name: "native-tls"
+            cargo-flags: "--no-default-features --features native-tls"
 
     name: CI (${{ matrix.features.name }})
 
@@ -47,7 +47,7 @@ jobs:
 
       - uses: ./.github/actions/ci
         with:
-          feature-flags: ${{ matrix.features.flags }}
+          cargo-flags: ${{ matrix.features.cargo-flags }}
 
   build-docs:
     runs-on: ubuntu-latest
@@ -58,12 +58,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get Rust version
-        id: rust-version
-        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
-
       - name: Setup rust tooling
-        run: |
-          rustup override set ${{ steps.rust-version.outputs.target }}
+        run: rustup override set nightly
 
-      - uses: ./.github/actions/build-docs
+      - name: Install cargo-docs-rs
+        run: cargo install cargo-docs-rs
+
+      - name: Build documentation
+        run: cargo docs-rs -p eventsource-client

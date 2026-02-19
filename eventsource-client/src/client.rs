@@ -154,7 +154,7 @@ impl ClientBuilder {
     /// use eventsource_client::ClientBuilder;
     ///
     /// let transport = MyTransport::new();
-    /// let client = ClientBuilder::for_url("https://sse.dev/test")
+    /// let client = ClientBuilder::for_url("https://live-test-scores.herokuapp.com/scores")
     ///     .expect("failed to create client builder")
     ///     .build_with_transport(transport);
     /// ```
