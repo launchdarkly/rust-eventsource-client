@@ -66,14 +66,14 @@ The `tail` example demonstrates a complete SSE client using the built-in `HyperT
 
 **Run with HTTP:**
 ```bash
-cargo run --example tail --features hyper -- http://sse.dev/test "Bearer token"
+cargo run --example tail --features hyper -- http://live-test-scores.herokuapp.com/scores "Bearer token"
 ```
 
 **Run with HTTPS:**
 ```bash
-cargo run --example tail --features hyper-rustls-native-roots -- https://sse.dev/test "Bearer token"
-cargo run --example tail --features hyper-rustls-webpki-roots -- https://sse.dev/test "Bearer token"
-cargo run --example tail --features native-tls -- https://sse.dev/test "Bearer token"
+cargo run --example tail --features hyper-rustls-native-roots -- https://live-test-scores.herokuapp.com/scores "Bearer token"
+cargo run --example tail --features hyper-rustls-webpki-roots -- https://live-test-scores.herokuapp.com/scores "Bearer token"
+cargo run --example tail --features native-tls -- https://live-test-scores.herokuapp.com/scores "Bearer token"
 ```
 
 The example shows:

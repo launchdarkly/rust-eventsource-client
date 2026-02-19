@@ -4,14 +4,14 @@
 //!
 //! To run this example with HTTP support:
 //! ```bash
-//! cargo run --example tail --features hyper -- http://sse.dev/test "Bearer token"
+//! cargo run --example tail --features hyper -- http://live-test-scores.herokuapp.com/scores "Bearer token"
 //! ```
 //!
 //! To run this example with HTTPS support:
 //! ```bash
-//! cargo run --example tail --features hyper-rustls-native-roots -- https://sse.dev/test "Bearer token"
-//! cargo run --example tail --features hyper-rustls-webpki-roots -- https://sse.dev/test "Bearer token"
-//! cargo run --example tail --features native-tls -- https://sse.dev/test "Bearer token"
+//! cargo run --example tail --features hyper-rustls-native-roots -- https://live-test-scores.herokuapp.com/scores "Bearer token"
+//! cargo run --example tail --features hyper-rustls-webpki-roots -- https://live-test-scores.herokuapp.com/scores "Bearer token"
+//! cargo run --example tail --features native-tls -- https://live-test-scores.herokuapp.com/scores "Bearer token"
 //! ```
 
 use futures::{Stream, TryStreamExt};
@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.len() != 3 {
         eprintln!("Please pass args: <url> <auth_hdr>");
-        eprintln!("Example: cargo run --example tail --features hyper https://sse.dev/test 'Bearer token'");
+        eprintln!("Example: cargo run --example tail --features hyper https://live-test-scores.herokuapp.com/scores 'Bearer token'");
         process::exit(1);
     }
 
