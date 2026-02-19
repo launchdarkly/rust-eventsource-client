@@ -20,7 +20,7 @@ tokio = { version = "1.17.0", features = ["time"] }
 rand = "0.8.5"
 base64 = "0.22.1"
 
-launchdarkly-sdk-transport = { git = "https://github.com/launchdarkly/rust-sdk-transport.git", branch = "mk/sdk-1904/native-tls" }
+launchdarkly-sdk-transport = { git = "https://github.com/launchdarkly/rust-sdk-transport.git", branch = "main" }
 
 [dev-dependencies]
 env_logger = "0.10.0"
