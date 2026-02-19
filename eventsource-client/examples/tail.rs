@@ -16,6 +16,7 @@ use futures::{Stream, TryStreamExt};
 use std::{env, process, time::Duration};
 
 use eventsource_client as es;
+use launchdarkly_sdk_transport::HyperTransport;
 
 #[tokio::main]
 #[allow(clippy::result_large_err)]
@@ -56,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_with_http(url: &str, auth_header: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let transport = es::HyperTransport::builder()
+    let transport = HyperTransport::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
         .build_http()?;
@@ -82,7 +83,7 @@ async fn run_with_http(url: &str, auth_header: &str) -> Result<(), Box<dyn std::
 
 #[cfg(feature = "hyper-rustls")]
 async fn run_with_https(url: &str, auth_header: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let transport = es::HyperTransport::builder()
+    let transport = HyperTransport::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
         .build_https()?;

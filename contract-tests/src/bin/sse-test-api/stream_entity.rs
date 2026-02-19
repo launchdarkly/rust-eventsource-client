@@ -7,7 +7,7 @@ use std::{
 };
 
 use eventsource_client as es;
-use eventsource_client::HyperTransport;
+use launchdarkly_sdk_transport::HyperTransport;
 
 use crate::{Config, EventType};
 

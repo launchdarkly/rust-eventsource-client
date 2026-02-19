@@ -14,9 +14,8 @@
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // You need to implement HttpTransport trait for your HTTP client
-//! // See examples/hyper_transport.rs or examples/reqwest_transport.rs for reference implementations
 //! # struct MyTransport;
-//! # impl eventsource_client::HttpTransport for MyTransport {
+//! # impl launchdarkly_sdk_transport::HttpTransport for MyTransport {
 //! #     fn request(&self, _req: http::Request<Option<String>>) -> eventsource_client::ResponseFuture {
 //! #         unimplemented!()
 //! #     }
@@ -56,10 +55,6 @@ mod error;
 mod event_parser;
 mod response;
 mod retry;
-mod transport;
-
-#[cfg(feature = "hyper")]
-mod transport_hyper;
 
 pub use client::*;
 pub use config::*;
@@ -67,6 +62,3 @@ pub use error::*;
 pub use event_parser::Event;
 pub use event_parser::SSE;
 pub use response::Response;
-pub use transport::*;
-#[cfg(feature = "hyper")]
-pub use transport_hyper::*;

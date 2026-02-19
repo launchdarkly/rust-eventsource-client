@@ -16,6 +16,20 @@ on:
 jobs:
   ci-build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - name: "default"
+            flags: ""
+          - name: "no-features"
+            flags: "--no-default-features"
+          - name: "hyper"
+            flags: "--no-default-features --features hyper"
+          - name: "hyper-rustls"
+            flags: "--no-default-features --features hyper-rustls"
+
+    name: CI (${{ matrix.features.name }})
 
     steps:
       - uses: actions/checkout@v4
@@ -32,4 +46,24 @@ jobs:
           rustup component add rustfmt clippy
 
       - uses: ./.github/actions/ci
+        with:
+          feature-flags: ${{ matrix.features.flags }}
+
+  build-docs:
+    runs-on: ubuntu-latest
+    name: Build Documentation (all features)
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Rust version
+        id: rust-version
+        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
+
+      - name: Setup rust tooling
+        run: |
+          rustup override set ${{ steps.rust-version.outputs.target }}
+
       - uses: ./.github/actions/build-docs
