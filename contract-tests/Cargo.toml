@@ -18,7 +18,7 @@ log = "0.4.6"
 http = "1.0"
 bytes = "1.5"
 
-launchdarkly-sdk-transport = { git = "https://github.com/launchdarkly/rust-sdk-transport.git", branch = "main" }
+launchdarkly-sdk-transport = { version = "0.1.0" }
 
 [[bin]]
 name = "sse-test-api"
