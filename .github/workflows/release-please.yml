@@ -20,7 +20,12 @@ jobs:
       - uses: actions/checkout@v4
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
         with:
-          fetch-depth: 0 # If you only need the current version keep this.
+          fetch-depth: 0 # Full history is required for proper changelog generation
+
+      - name: Get Rust version
+        if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
+        id: rust-version
+        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
       - name: Get Rust version
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}

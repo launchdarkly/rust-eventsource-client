@@ -83,6 +83,7 @@ struct Event {
 async fn status() -> impl Responder {
     web::Json(Status {
         capabilities: vec![
+            "bom".to_string(),
             "comments".to_string(),
             "headers".to_string(),
             "last-event-id".to_string(),

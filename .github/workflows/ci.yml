@@ -33,8 +33,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # If you only need the current version keep this.
+
+      - name: Get Rust version
+        id: rust-version
+        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
       - name: Get Rust version
         id: rust-version
