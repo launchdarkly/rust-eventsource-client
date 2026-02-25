@@ -27,11 +27,6 @@ jobs:
         id: rust-version
         run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
-      - name: Get Rust version
-        if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
-        id: rust-version
-        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
-
       - name: Setup rust tooling
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
         run: |
