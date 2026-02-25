@@ -1,34 +1,34 @@
-use hyper::body::Buf;
-use hyper::{header::HeaderValue, Body, HeaderMap, StatusCode};
+use http::{HeaderMap, HeaderValue, StatusCode};
 
-use crate::{Error, HeaderError};
+use crate::HeaderError;
+use launchdarkly_sdk_transport::ByteStream;
 
+/// Represents an error response body as a stream of bytes.
+///
+/// The body is provided as a stream so that users can read error details if needed.
+/// For large error responses, the stream allows processing without loading the entire
+/// response into memory.
 pub struct ErrorBody {
-    body: Body,
+    body: ByteStream,
 }
 
 impl ErrorBody {
-    pub fn new(body: Body) -> Self {
+    /// Create a new ErrorBody from a ByteStream
+    pub fn new(body: ByteStream) -> Self {
         Self { body }
     }
 
-    /// Returns the body of the response as a vector of bytes.
-    ///
-    /// Caution: This method reads the entire body into memory. You should only use this method if
-    /// you know the response is of a reasonable size.
-    pub async fn body_bytes(self) -> Result<Vec<u8>, Error> {
-        let buf = match hyper::body::aggregate(self.body).await {
-            Ok(buf) => buf,
-            Err(err) => return Err(Error::HttpStream(Box::new(err))),
-        };
-
-        Ok(buf.chunk().to_vec())
+    /// Consume this ErrorBody and return the underlying ByteStream
+    pub fn into_stream(self) -> ByteStream {
+        self.body
     }
 }
 
 impl std::fmt::Debug for ErrorBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ErrorBody").finish()
+        f.debug_struct("ErrorBody")
+            .field("body", &"<stream>")
+            .finish()
     }
 }
 

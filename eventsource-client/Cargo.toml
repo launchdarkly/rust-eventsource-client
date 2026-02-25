@@ -11,15 +11,16 @@ keywords = ["launchdarkly", "feature-flags", "feature-toggles", "eventsource", "
 exclude = ["CHANGELOG.md"]
 
 [dependencies]
+bytes = "1.5"
 futures = "0.3.21"
-hyper = { version = "0.14.19", features = ["client", "http1", "tcp"] }
-hyper-rustls = { version = "0.24.1", optional = true }
+http = "1.0"
 log = "0.4.6"
 pin-project = "1.0.10"
 tokio = { version = "1.17.0", features = ["time"] }
-hyper-timeout = "0.4.1"
 rand = "0.8.5"
 base64 = "0.22.1"
+
+launchdarkly-sdk-transport = { version = "0.1.0" }
 
 [dev-dependencies]
 env_logger = "0.10.0"
@@ -30,11 +31,13 @@ tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
 test-case = "3.2.1"
 proptest = "1.0.0"
 
-
-[features]
-default = ["rustls"]
-rustls = ["hyper-rustls", "hyper-rustls/http2"]
-
 [[example]]
 name = "tail"
-required-features = ["rustls"]
+required-features = ["hyper"]
+
+[features]
+default = ["hyper"]
+hyper = ["launchdarkly-sdk-transport/hyper"]
+native-tls = ["hyper", "launchdarkly-sdk-transport/native-tls"]
+hyper-rustls-native-roots = ["hyper", "launchdarkly-sdk-transport/hyper-rustls-native-roots"]
+hyper-rustls-webpki-roots = ["hyper", "launchdarkly-sdk-transport/hyper-rustls-webpki-roots"]

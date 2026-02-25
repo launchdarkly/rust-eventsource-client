@@ -3,7 +3,8 @@ name: Run Release Please
 on:
   push:
     branches:
-      - main
+      - "main"
+      - "feat/**"
 
 jobs:
   release-package:
@@ -26,6 +27,11 @@ jobs:
         id: rust-version
         run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
+      - name: Get Rust version
+        if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
+        id: rust-version
+        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
+
       - name: Setup rust tooling
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
         run: |
@@ -40,9 +46,6 @@ jobs:
           ssm_parameter_pairs: "/production/common/releasing/cratesio/api_token = CARGO_REGISTRY_TOKEN"
 
       - uses: ./.github/actions/ci
-        if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
-
-      - uses: ./.github/actions/build-docs
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
 
       - uses: ./.github/actions/publish

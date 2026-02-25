@@ -7,6 +7,7 @@ use std::{
 };
 
 use eventsource_client as es;
+use launchdarkly_sdk_transport::HyperTransport;
 
 use crate::{Config, EventType};
 
@@ -102,10 +103,6 @@ impl Inner {
             reconnect_options = reconnect_options.delay(Duration::from_millis(delay_ms));
         }
 
-        if let Some(read_timeout_ms) = config.read_timeout_ms {
-            client_builder = client_builder.read_timeout(Duration::from_millis(read_timeout_ms));
-        }
-
         if let Some(last_event_id) = &config.last_event_id {
             client_builder = client_builder.last_event_id(last_event_id.clone());
         }
@@ -127,8 +124,34 @@ impl Inner {
             }
         }
 
+        // Build with HyperTransport
+        let mut transport_builder = HyperTransport::builder();
+
+        if let Some(timeout_ms) = config.read_timeout_ms {
+            transport_builder = transport_builder.read_timeout(Duration::from_millis(timeout_ms));
+        }
+
+        #[cfg(any(
+            feature = "hyper-rustls-native-roots",
+            feature = "hyper-rustls-webpki-roots",
+            feature = "native-tls"
+        ))]
+        let transport = transport_builder
+            .build_https()
+            .map_err(|e| format!("Failed to build HTTPS transport: {e:?}"))?;
+        #[cfg(not(any(
+            feature = "hyper-rustls-native-roots",
+            feature = "hyper-rustls-webpki-roots",
+            feature = "native-tls"
+        )))]
+        let transport = transport_builder
+            .build_http()
+            .map_err(|e| format!("Failed to build HTTP transport: {e:?}"))?;
+
         Ok(Box::new(
-            client_builder.reconnect(reconnect_options.build()).build(),
+            client_builder
+                .reconnect(reconnect_options.build())
+                .build_with_transport(transport),
         ))
     }
 }

@@ -11,10 +11,21 @@ eventsource-client = { path = "../eventsource-client" }
 serde_json = { version = "1.0.39"}
 actix = { version = "0.13.1"}
 actix-web = { version = "4"}
-reqwest = { version = "0.11.6", default-features = false, features = ["json", "rustls-tls"] }
+# reqwest is required for callback client (test harness communication)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 env_logger = { version = "0.10.0" }
-hyper = { version = "0.14.19", features = ["client", "http1", "tcp"] }
 log = "0.4.6"
+http = "1.0"
+bytes = "1.5"
+
+launchdarkly-sdk-transport = { version = "0.1.0" }
 
 [[bin]]
 name = "sse-test-api"
+
+[features]
+default = ["hyper"]
+hyper = ["eventsource-client/hyper", "launchdarkly-sdk-transport/hyper"]
+native-tls = ["hyper", "eventsource-client/native-tls"]
+hyper-rustls-native-roots = ["hyper", "eventsource-client/hyper-rustls-native-roots"]
+hyper-rustls-webpki-roots = ["hyper", "eventsource-client/hyper-rustls-webpki-roots"]

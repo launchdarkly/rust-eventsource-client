@@ -1,20 +1,42 @@
 name: Run CI
 on:
   push:
-    branches: [main]
+    branches:
+      - "main"
+      - "feat/**"
     paths-ignore:
       - "**.md" # Do not need to run CI for markdown changes.
   pull_request:
-    branches: [main]
+    branches:
+      - "main"
+      - "feat/**"
     paths-ignore:
       - "**.md"
 
 jobs:
   ci-build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - name: "default"
+            cargo-flags: ""
+          - name: "hyper-rustls-native-roots"
+            cargo-flags: "--no-default-features --features hyper-rustls-native-roots"
+          - name: "hyper-rustls-webpki-roots"
+            cargo-flags: "--no-default-features --features hyper-rustls-webpki-roots"
+          - name: "native-tls"
+            cargo-flags: "--no-default-features --features native-tls"
+
+    name: CI (${{ matrix.features.name }})
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Get Rust version
+        id: rust-version
+        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
       - name: Get Rust version
         id: rust-version
@@ -26,4 +48,23 @@ jobs:
           rustup component add rustfmt clippy
 
       - uses: ./.github/actions/ci
-      - uses: ./.github/actions/build-docs
+        with:
+          cargo-flags: ${{ matrix.features.cargo-flags }}
+
+  build-docs:
+    runs-on: ubuntu-latest
+    name: Build Documentation (all features)
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup rust tooling
+        run: rustup override set nightly
+
+      - name: Install cargo-docs-rs
+        run: cargo install cargo-docs-rs
+
+      - name: Build documentation
+        run: cargo docs-rs -p eventsource-client
