@@ -38,10 +38,6 @@ jobs:
         id: rust-version
         run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
-      - name: Get Rust version
-        id: rust-version
-        run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
-
       - name: Setup rust tooling
         run: |
           rustup override set ${{ steps.rust-version.outputs.target }}
