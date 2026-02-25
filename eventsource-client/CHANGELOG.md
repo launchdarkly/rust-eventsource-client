@@ -2,6 +2,20 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.17.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.16.2...0.17.0) (2026-02-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* Introduce new hyper related features `native-tls`, `hyper-rustls-native-roots`, `hyper-rustls-webpki-roots`
+* Use `launchdarkly-sdk-transport` instead of relying directly on hyper
+
+### Features
+
+* Introduce new hyper related features `native-tls`, `hyper-rustls-native-roots`, `hyper-rustls-webpki-roots` ([7419d59](https://github.com/launchdarkly/rust-eventsource-client/commit/7419d59d4b5fe0da8768e96fa1d99a2a52ecc02f))
+* Support http proxy through explicit config or environment variable detection ([7419d59](https://github.com/launchdarkly/rust-eventsource-client/commit/7419d59d4b5fe0da8768e96fa1d99a2a52ecc02f))
+* Use `launchdarkly-sdk-transport` instead of relying directly on hyper ([7419d59](https://github.com/launchdarkly/rust-eventsource-client/commit/7419d59d4b5fe0da8768e96fa1d99a2a52ecc02f))
+
 ## [0.16.2](https://github.com/launchdarkly/rust-eventsource-client/compare/0.16.1...0.16.2) (2026-02-11)
 
 
