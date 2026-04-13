@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use rand::{thread_rng, Rng};
+use rand::RngExt;
 
 pub(crate) trait RetryStrategy {
     /// Return the next amount of time a failed request should delay before re-attempting.
@@ -59,7 +59,7 @@ impl RetryStrategy for BackoffRetry {
         self.next_delay = std::cmp::min(self.max_delay, current_delay * self.backoff_factor);
 
         if self.include_jitter {
-            thread_rng().gen_range(current_delay / 2..=current_delay)
+            rand::rng().random_range(current_delay / 2..=current_delay)
         } else {
             current_delay
         }

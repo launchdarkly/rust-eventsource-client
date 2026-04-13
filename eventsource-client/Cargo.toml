@@ -17,7 +17,7 @@ http = "1.0"
 log = "0.4.6"
 pin-project = "1.0.10"
 tokio = { version = "1.17.0", features = ["time"] }
-rand = "0.8.5"
+rand = "0.10.1"
 base64 = "0.22.1"
 
 launchdarkly-sdk-transport = { version = "0.1.0" }
