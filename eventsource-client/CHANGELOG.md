@@ -2,6 +2,13 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.17.2](https://github.com/launchdarkly/rust-eventsource-client/compare/0.17.1...0.17.2) (2026-04-13)
+
+
+### Bug Fixes
+
+* **deps:** bump rand from 0.8.5 to 0.10.1 ([#129](https://github.com/launchdarkly/rust-eventsource-client/issues/129)) ([49efcd4](https://github.com/launchdarkly/rust-eventsource-client/commit/49efcd4036e2bbe3e00799fb49a2c460d366586b))
+
 ## [0.17.1](https://github.com/launchdarkly/rust-eventsource-client/compare/0.17.0...0.17.1) (2026-03-06)
 
 
