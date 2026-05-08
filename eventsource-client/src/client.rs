@@ -495,7 +495,21 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
                 },
                 StateProj::Connected(mut body) => match ready!(body.as_mut().poll_next(cx)) {
                     Some(Ok(result)) => {
-                        this.event_parser.process_bytes(result)?;
+                        if let Err(e) = this.event_parser.process_bytes(result) {
+                            // A parse error means the current response body is
+                            // unusable; schedule a reconnect to abandon it.
+                            if self.props.reconnect_opts.reconnect {
+                                let duration = self
+                                    .as_mut()
+                                    .project()
+                                    .retry_strategy
+                                    .next_delay(Instant::now());
+                                self.as_mut().project().state.set(State::WaitingToReconnect(
+                                    delay(duration, "reconnecting"),
+                                ));
+                            }
+                            return Poll::Ready(Some(Err(e)));
+                        }
                         continue;
                     }
                     Some(Err(e)) => {
@@ -711,5 +725,68 @@ mod tests {
             .await;
 
         initial_connection(&mock_server.url(), retry_initial, expected).await;
+    }
+
+    // When a parse error happens during streaming and reconnect is
+    // enabled, the next stream item should be a fresh `Connected` from
+    // the reconnect, not another error from continuing to drain the
+    // broken response body.
+    #[cfg(feature = "hyper")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn parser_error_schedules_reconnect_immediately() {
+        use crate::{Client, ClientBuilder, ReconnectOptionsBuilder, SSE};
+        use futures::StreamExt;
+        use launchdarkly_sdk_transport::HyperTransport;
+
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_body(b"\xff\xfe:bad\n\n".as_ref())
+            .expect_at_least(2)
+            .create_async()
+            .await;
+
+        let transport = HyperTransport::new().expect("failed to build transport");
+        let client = ClientBuilder::for_url(&server.url())
+            .unwrap()
+            .reconnect(
+                ReconnectOptionsBuilder::new(true)
+                    .delay(Duration::from_millis(10))
+                    .delay_max(Duration::from_millis(10))
+                    .retry_initial(true)
+                    .build(),
+            )
+            .build_with_transport(transport);
+
+        let mut stream = client.stream();
+
+        // Expected order: Connected, parse error, Connected (reconnect).
+        let mut items = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_millis(500), async {
+            while items.len() < 3 {
+                match stream.next().await {
+                    Some(item) => items.push(item),
+                    None => break,
+                }
+            }
+        })
+        .await;
+
+        assert!(
+            matches!(items.first(), Some(Ok(SSE::Connected(_)))),
+            "expected initial Connected, got {:?}",
+            items.first()
+        );
+        assert!(
+            matches!(items.get(1), Some(Err(_))),
+            "expected parse error after first connection, got {:?}",
+            items.get(1)
+        );
+        assert!(
+            matches!(items.get(2), Some(Ok(SSE::Connected(_)))),
+            "expected reconnect (Connected) immediately after parse error, got {:?}",
+            items.get(2)
+        );
     }
 }
