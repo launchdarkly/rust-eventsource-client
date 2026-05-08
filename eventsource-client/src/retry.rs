@@ -15,6 +15,11 @@ pub(crate) trait RetryStrategy {
 
 const DEFAULT_RESET_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Floor applied to a server-supplied SSE `retry:` value. A server that
+/// sends `retry: 0` would otherwise collapse the backoff to zero and
+/// reconnect would become a tight loop.
+const MINIMUM_BASE_DELAY: Duration = Duration::from_millis(1);
+
 pub(crate) struct BackoffRetry {
     base_delay: Duration,
     max_delay: Duration,
@@ -66,7 +71,7 @@ impl RetryStrategy for BackoffRetry {
     }
 
     fn change_base_delay(&mut self, base_delay: Duration) {
-        self.base_delay = base_delay;
+        self.base_delay = std::cmp::max(base_delay, MINIMUM_BASE_DELAY);
         self.next_delay = self.base_delay;
     }
 
@@ -109,6 +114,24 @@ mod tests {
         let base = Duration::from_secs(3);
         retry.change_base_delay(base);
         assert_eq!(retry.next_delay(start.add(Duration::from_secs(2))), base);
+    }
+
+    #[test]
+    fn test_change_base_delay_clamps_to_minimum() {
+        // A server that sends `retry: 0` would otherwise produce a zero-delay
+        // reconnect loop. The clamp ensures the next delay stays at least
+        // MINIMUM_BASE_DELAY.
+        let mut retry =
+            BackoffRetry::new(Duration::from_secs(10), Duration::from_secs(30), 1, false);
+        let start = Instant::now();
+
+        retry.change_base_delay(Duration::ZERO);
+        assert!(retry.next_delay(start) >= super::MINIMUM_BASE_DELAY);
+
+        // Sub-minimum values are also clamped, not silently accepted.
+        let below_minimum = super::MINIMUM_BASE_DELAY / 2;
+        retry.change_base_delay(below_minimum);
+        assert!(retry.next_delay(start) >= super::MINIMUM_BASE_DELAY);
     }
 
     #[test]
