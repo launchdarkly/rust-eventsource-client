@@ -199,10 +199,20 @@ impl<T: HttpTransport> Client for ClientImpl<T> {
     /// Connect to the server and begin consuming the stream. Produces a
     /// [`Stream`] of [`Event`](crate::Event)s wrapped in [`Result`].
     ///
-    /// Do not use the stream after it returned an error!
+    /// Errors yielded by the stream are not terminal: keep polling.
+    /// When [`ReconnectOptions::reconnect`] is enabled (the default),
+    /// the stream schedules a reconnect on retryable errors and the
+    /// next poll resumes from a fresh connection.
     ///
-    /// After the first successful connection, the stream will
-    /// reconnect for retryable errors.
+    /// The stream is exhausted only when [`Stream::poll_next`] returns
+    /// [`Poll::Ready(None)`]. That happens when the underlying state
+    /// machine reaches `StreamClosed` (e.g. a redirect-limit overrun,
+    /// a malformed `Location` header, or an error during initial
+    /// connection while [`ReconnectOptions::retry_initial`] is
+    /// disabled), or after any error when reconnect is disabled.
+    ///
+    /// [`Poll::Ready(None)`]: std::task::Poll::Ready
+    /// [`Stream::poll_next`]: futures::Stream::poll_next
     fn stream(&self) -> BoxStream<Result<SSE>> {
         Box::pin(ReconnectingRequest::new(
             Arc::clone(&self.transport),
