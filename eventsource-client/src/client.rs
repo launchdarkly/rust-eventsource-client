@@ -734,7 +734,7 @@ mod tests {
     #[cfg(feature = "hyper")]
     #[tokio::test(flavor = "multi_thread")]
     async fn parser_error_schedules_reconnect_immediately() {
-        use crate::{Client, ClientBuilder, ReconnectOptionsBuilder, SSE};
+        use crate::{Client, ClientBuilder, Error, ReconnectOptionsBuilder, SSE};
         use futures::StreamExt;
         use launchdarkly_sdk_transport::HyperTransport;
 
@@ -743,7 +743,6 @@ mod tests {
             .mock("GET", "/")
             .with_status(200)
             .with_body(b"\xff\xfe:bad\n\n".as_ref())
-            .expect_at_least(2)
             .create_async()
             .await;
 
@@ -763,7 +762,7 @@ mod tests {
 
         // Expected order: Connected, parse error, Connected (reconnect).
         let mut items = Vec::new();
-        let _ = tokio::time::timeout(Duration::from_millis(500), async {
+        tokio::time::timeout(Duration::from_secs(2), async {
             while items.len() < 3 {
                 match stream.next().await {
                     Some(item) => items.push(item),
@@ -771,7 +770,8 @@ mod tests {
                 }
             }
         })
-        .await;
+        .await
+        .expect("timed out waiting for parse error and reconnect");
 
         assert!(
             matches!(items.first(), Some(Ok(SSE::Connected(_)))),
@@ -779,8 +779,8 @@ mod tests {
             items.first()
         );
         assert!(
-            matches!(items.get(1), Some(Err(_))),
-            "expected parse error after first connection, got {:?}",
+            matches!(items.get(1), Some(Err(Error::InvalidLine(_)))),
+            "expected InvalidLine error after first connection, got {:?}",
             items.get(1)
         );
         assert!(
