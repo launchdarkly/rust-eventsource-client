@@ -2,6 +2,14 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.17.4](https://github.com/launchdarkly/rust-eventsource-client/compare/0.17.3...0.17.4) (2026-05-11)
+
+
+### Bug Fixes
+
+* respect reconnect=false and clamp server-supplied retry: 0 ([#135](https://github.com/launchdarkly/rust-eventsource-client/issues/135)) ([80c123a](https://github.com/launchdarkly/rust-eventsource-client/commit/80c123a38057ed67a454f7e3b7d91876a09a1b51))
+* schedule reconnect after parse error during streaming ([#134](https://github.com/launchdarkly/rust-eventsource-client/issues/134)) ([2ac2998](https://github.com/launchdarkly/rust-eventsource-client/commit/2ac2998b5352e074413ec7ba62350e03a8f26f52))
+
 ## [0.17.3](https://github.com/launchdarkly/rust-eventsource-client/compare/0.17.2...0.17.3) (2026-04-20)
 
 
