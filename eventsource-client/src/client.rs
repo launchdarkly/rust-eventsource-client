@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use tokio::sync::watch;
 use tokio::time::Sleep;
 
 use crate::{
@@ -61,6 +62,7 @@ pub struct ClientBuilder {
     method: String,
     body: Option<String>,
     max_redirects: Option<u32>,
+    dynamic_url: Option<watch::Receiver<Uri>>,
 }
 
 impl ClientBuilder {
@@ -82,7 +84,15 @@ impl ClientBuilder {
             method: String::from("GET"),
             max_redirects: None,
             body: None,
+            dynamic_url: None,
         })
+    }
+
+    /// Watch the given receiver for the url to use when attempting to connect
+    /// or reconnect. Overrides [`for_url`] if both are present.
+    pub fn dynamic_url(mut self, uri: watch::Receiver<Uri>) -> ClientBuilder {
+        self.dynamic_url = Some(uri);
+        self
     }
 
     /// Set the request method used for the initial connection to the SSE endpoint.
@@ -171,6 +181,7 @@ impl ClientBuilder {
                 body: self.body,
                 reconnect_opts: self.reconnect_opts,
                 max_redirects: self.max_redirects.unwrap_or(DEFAULT_REDIRECT_LIMIT),
+                dynamic_url: self.dynamic_url,
             },
             last_event_id: self.last_event_id,
         }
@@ -185,6 +196,16 @@ struct RequestProps {
     body: Option<String>,
     reconnect_opts: ReconnectOptions,
     max_redirects: u32,
+    dynamic_url: Option<watch::Receiver<Uri>>,
+}
+
+impl RequestProps {
+    fn resolve_url(&self) -> Uri {
+        self.dynamic_url
+            .as_ref()
+            .map(|rx| rx.borrow().clone())
+            .unwrap_or_else(|| self.url.clone())
+    }
 }
 
 /// A client implementation that connects to a server using the Server-Sent Events protocol
@@ -228,12 +249,16 @@ enum State {
     New,
     Connecting {
         retry: bool,
+        redirect_count: u32,
         #[pin]
         resp: ResponseFuture,
     },
     Connected(#[pin] ByteStream),
     WaitingToReconnect(#[pin] Sleep),
-    FollowingRedirect(Option<HeaderValue>),
+    FollowingRedirect {
+        header: Option<HeaderValue>,
+        redirect_count: u32,
+    },
     StreamClosed,
 }
 
@@ -245,7 +270,7 @@ impl State {
             State::Connecting { retry: true, .. } => "connecting(retry)",
             State::Connected(_) => "connected",
             State::WaitingToReconnect(_) => "waiting-to-reconnect",
-            State::FollowingRedirect(_) => "following-redirect",
+            State::FollowingRedirect { .. } => "following-redirect",
             State::StreamClosed => "closed",
         }
     }
@@ -265,8 +290,6 @@ pub struct ReconnectingRequest<T: HttpTransport> {
     #[pin]
     state: State,
     retry_strategy: Box<dyn RetryStrategy + Send + Sync>,
-    current_url: Uri,
-    redirect_count: u32,
     event_parser: EventParser,
     last_event_id: Option<String>,
     #[pin]
@@ -283,7 +306,6 @@ impl<T: HttpTransport> ReconnectingRequest<T> {
         let delay_max = props.reconnect_opts.delay_max;
         let backoff_factor = props.reconnect_opts.backoff_factor;
 
-        let url = props.url.clone();
         ReconnectingRequest {
             props,
             transport,
@@ -294,18 +316,16 @@ impl<T: HttpTransport> ReconnectingRequest<T> {
                 backoff_factor,
                 true,
             )),
-            redirect_count: 0,
-            current_url: url,
             event_parser: EventParser::new(),
             last_event_id,
             initial_connection: true,
         }
     }
 
-    fn send_request(&self) -> Result<ResponseFuture> {
+    fn send_request(&self, url: &Uri) -> Result<ResponseFuture> {
         let mut request_builder = Request::builder()
             .method(self.props.method.as_str())
-            .uri(&self.current_url);
+            .uri(url);
 
         for (name, value) in &self.props.headers {
             request_builder = request_builder.header(name, value);
@@ -327,21 +347,6 @@ impl<T: HttpTransport> ReconnectingRequest<T> {
             .map_err(|e| Error::InvalidParameter(Box::new(e)))?;
 
         Ok(self.transport.request(request))
-    }
-
-    fn reset_redirects(self: Pin<&mut Self>) {
-        let url = self.props.url.clone();
-        let this = self.project();
-        *this.current_url = url;
-        *this.redirect_count = 0;
-    }
-
-    fn increment_redirect_counter(self: Pin<&mut Self>) -> bool {
-        if self.redirect_count == self.props.max_redirects {
-            return false;
-        }
-        *self.project().redirect_count += 1;
-        true
     }
 }
 
@@ -378,17 +383,19 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
                 // to ensure that we only connect when polled.
                 StateProj::New => {
                     *self.as_mut().project().event_parser = EventParser::new();
-                    match self.send_request() {
+                    let url = self.props.resolve_url();
+                    match self.send_request(&url) {
                         Ok(resp) => {
                             let retry = if self.initial_connection {
                                 self.props.reconnect_opts.retry_initial
                             } else {
                                 self.props.reconnect_opts.reconnect
                             };
-                            self.as_mut()
-                                .project()
-                                .state
-                                .set(State::Connecting { resp, retry })
+                            self.as_mut().project().state.set(State::Connecting {
+                                resp,
+                                retry,
+                                redirect_count: 0,
+                            })
                         }
                         Err(e) => {
                             // This error seems to be unrecoverable. So we should just shut down the
@@ -398,7 +405,11 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
                         }
                     }
                 }
-                StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
+                StateProj::Connecting {
+                    retry,
+                    redirect_count,
+                    resp,
+                } => match ready!(resp.poll(cx)) {
                     Ok(resp) => {
                         debug!(
                             "HTTP response status: {}, headers: {:?}",
@@ -408,7 +419,6 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
 
                         if resp.status().is_success() {
                             self.as_mut().project().retry_strategy.reset(Instant::now());
-                            self.as_mut().reset_redirects();
 
                             let status = resp.status();
                             let headers = resp.headers().clone();
@@ -427,20 +437,22 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
                         if resp.status() == 301 || resp.status() == 307 {
                             debug!("got redirected ({})", resp.status());
 
-                            if self.as_mut().increment_redirect_counter() {
-                                debug!("following redirect {}", self.redirect_count);
-
-                                self.as_mut().project().state.set(State::FollowingRedirect(
-                                    resp.headers().get("location").cloned(),
-                                ));
-                                continue;
-                            } else {
+                            let next_count = *redirect_count + 1;
+                            if next_count > self.props.max_redirects {
                                 debug!("redirect limit reached ({})", self.props.max_redirects);
 
                                 self.as_mut().project().state.set(State::StreamClosed);
                                 return Poll::Ready(Some(Err(Error::MaxRedirectLimitReached(
                                     self.props.max_redirects,
                                 ))));
+                            } else {
+                                debug!("following redirect {}", next_count);
+
+                                self.as_mut().project().state.set(State::FollowingRedirect {
+                                    header: resp.headers().get("location").cloned(),
+                                    redirect_count: next_count,
+                                });
+                                continue;
                             }
                         }
 
@@ -457,8 +469,6 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
                             self.as_mut().project().state.set(State::StreamClosed);
                             return Poll::Ready(Some(Err(error)));
                         }
-
-                        self.as_mut().reset_redirects();
 
                         let duration = self
                             .as_mut()
@@ -493,10 +503,30 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
                             .set(State::WaitingToReconnect(delay(duration, "retrying")));
                     }
                 },
-                StateProj::FollowingRedirect(maybe_header) => match uri_from_header(maybe_header) {
+                StateProj::FollowingRedirect {
+                    header,
+                    redirect_count,
+                } => match uri_from_header(header) {
                     Ok(uri) => {
-                        *self.as_mut().project().current_url = uri;
-                        self.as_mut().project().state.set(State::New);
+                        let count = *redirect_count;
+                        match self.send_request(&uri) {
+                            Ok(resp) => {
+                                let retry = if self.initial_connection {
+                                    self.props.reconnect_opts.retry_initial
+                                } else {
+                                    self.props.reconnect_opts.reconnect
+                                };
+                                self.as_mut().project().state.set(State::Connecting {
+                                    resp,
+                                    retry,
+                                    redirect_count: count,
+                                });
+                            }
+                            Err(e) => {
+                                self.as_mut().project().state.set(State::StreamClosed);
+                                return Poll::Ready(Some(Err(e)));
+                            }
+                        }
                     }
                     Err(e) => {
                         self.as_mut().project().state.set(State::StreamClosed);
@@ -640,7 +670,11 @@ mod tests {
         assert_eq!(Some(&expected), actual);
     }
 
-    use std::{pin::pin, sync::Arc, time::Duration};
+    use std::{
+        pin::pin,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use bytes::Bytes;
     use futures::{stream, TryStreamExt};
@@ -710,6 +744,7 @@ mod tests {
             body: None,
             reconnect_opts,
             max_redirects: 10,
+            dynamic_url: None,
         };
 
         let mut reconnecting_request = ReconnectingRequest::new(transport.clone(), req_props, None);
@@ -719,6 +754,7 @@ mod tests {
 
         reconnecting_request.state = State::Connecting {
             retry: reconnecting_request.props.reconnect_opts.retry_initial,
+            redirect_count: 0,
             resp,
         };
 
@@ -743,6 +779,235 @@ mod tests {
             .await;
 
         initial_connection(&mock_server.url(), retry_initial, expected).await;
+    }
+
+    #[derive(Clone)]
+    struct CapturingTransport {
+        captured_uris: Arc<Mutex<Vec<http::Uri>>>,
+    }
+
+    impl HttpTransport for CapturingTransport {
+        fn request(&self, request: http::Request<Option<Bytes>>) -> ResponseFuture {
+            self.captured_uris
+                .lock()
+                .unwrap()
+                .push(request.uri().clone());
+            Box::pin(async {
+                Err(TransportError::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "test",
+                )))
+            })
+        }
+    }
+
+    fn props_with_dynamic(
+        static_url: &str,
+        rx: tokio::sync::watch::Receiver<http::Uri>,
+    ) -> RequestProps {
+        RequestProps {
+            url: static_url.parse().unwrap(),
+            headers: HeaderMap::new(),
+            method: "GET".to_string(),
+            body: None,
+            reconnect_opts: ReconnectOptionsBuilder::new(false).build(),
+            max_redirects: 10,
+            dynamic_url: Some(rx),
+        }
+    }
+
+    #[tokio::test]
+    async fn dynamic_url_is_used_on_initial_connect() {
+        let (_tx, rx) = tokio::sync::watch::channel(
+            "http://dynamic.example.com/".parse::<http::Uri>().unwrap(),
+        );
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let transport = CapturingTransport {
+            captured_uris: captured.clone(),
+        };
+        let props = props_with_dynamic("http://static.example.com/", rx);
+        let req = ReconnectingRequest::new(Arc::new(transport), props, None);
+
+        let _ = req.send_request(&req.props.resolve_url());
+
+        let uris = captured.lock().unwrap();
+        assert_eq!(uris.len(), 1);
+        assert_eq!(uris[0].to_string(), "http://dynamic.example.com/");
+    }
+
+    #[derive(Clone)]
+    struct RedirectTransport {
+        location: String,
+    }
+
+    impl HttpTransport for RedirectTransport {
+        fn request(&self, _request: http::Request<Option<Bytes>>) -> ResponseFuture {
+            let location = self.location.clone();
+            Box::pin(async move {
+                let byte_stream: ByteStream = Box::pin(stream::iter(Vec::<
+                    std::result::Result<Bytes, TransportError>,
+                >::new()));
+                Ok(http::Response::builder()
+                    .status(301)
+                    .header("Location", location)
+                    .body(byte_stream)
+                    .unwrap())
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct RedirectOnceTransport {
+        location: String,
+        captured_uris: Arc<Mutex<Vec<http::Uri>>>,
+    }
+
+    impl HttpTransport for RedirectOnceTransport {
+        fn request(&self, request: http::Request<Option<Bytes>>) -> ResponseFuture {
+            let mut uris = self.captured_uris.lock().unwrap();
+            let is_first = uris.is_empty();
+            uris.push(request.uri().clone());
+            drop(uris);
+            let location = self.location.clone();
+            Box::pin(async move {
+                if is_first {
+                    let byte_stream: ByteStream = Box::pin(stream::iter(Vec::<
+                        std::result::Result<Bytes, TransportError>,
+                    >::new(
+                    )));
+                    Ok(http::Response::builder()
+                        .status(301)
+                        .header("Location", location)
+                        .body(byte_stream)
+                        .unwrap())
+                } else {
+                    Err(TransportError::new(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        "stop",
+                    )))
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn connecting_sees_301_follows_to_location() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let transport = Arc::new(RedirectOnceTransport {
+            location: "http://redirect.example.com/".to_string(),
+            captured_uris: captured.clone(),
+        });
+        let props = RequestProps {
+            url: "http://start.example.com/".parse().unwrap(),
+            headers: HeaderMap::new(),
+            method: "GET".to_string(),
+            body: None,
+            reconnect_opts: ReconnectOptionsBuilder::new(false).build(),
+            max_redirects: 3,
+            dynamic_url: None,
+        };
+        let req = ReconnectingRequest::new(transport, props, None);
+        let mut req = pin!(req);
+        timeout(Duration::from_millis(500), req.try_next())
+            .await
+            .ok();
+
+        let uris = captured.lock().unwrap();
+        assert_eq!(uris.len(), 2);
+        assert_eq!(uris[0].to_string(), "http://start.example.com/");
+        assert_eq!(uris[1].to_string(), "http://redirect.example.com/");
+    }
+
+    #[tokio::test]
+    async fn connecting_sees_301_at_redirect_limit_closes_stream() {
+        let transport = Arc::new(RedirectTransport {
+            location: "http://redirect.example.com/".to_string(),
+        });
+        let props = RequestProps {
+            url: "http://start.example.com/".parse().unwrap(),
+            headers: HeaderMap::new(),
+            method: "GET".to_string(),
+            body: None,
+            reconnect_opts: ReconnectOptionsBuilder::new(false).build(),
+            max_redirects: 3,
+            dynamic_url: None,
+        };
+        let mut req = ReconnectingRequest::new(transport.clone(), props, None);
+
+        let resp = transport.request(
+            http::Request::builder()
+                .uri("http://start.example.com/")
+                .body(None)
+                .unwrap(),
+        );
+        // Already at max_redirects=3, so the next redirect (would be #4) should fail.
+        req.state = State::Connecting {
+            retry: true,
+            redirect_count: 3,
+            resp,
+        };
+
+        let mut req = pin!(req);
+        let result = timeout(Duration::from_millis(500), req.try_next()).await;
+
+        assert!(matches!(&req.state, State::StreamClosed));
+        assert!(matches!(
+            result,
+            Ok(Err(crate::Error::MaxRedirectLimitReached(3)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn redirect_target_overrides_dynamic_url() {
+        let (_tx, rx) = tokio::sync::watch::channel(
+            "http://dynamic.example.com/".parse::<http::Uri>().unwrap(),
+        );
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let transport = CapturingTransport {
+            captured_uris: captured.clone(),
+        };
+        let props = props_with_dynamic("http://static.example.com/", rx);
+        let mut req = ReconnectingRequest::new(Arc::new(transport), props, None);
+
+        // Jump straight to FollowingRedirect. The poll loop should parse the
+        // location header and call send_request with the redirect target,
+        // not with the dynamic-uri watch value.
+        req.state = State::FollowingRedirect {
+            header: Some(http::HeaderValue::from_static(
+                "http://redirect.example.com/",
+            )),
+            redirect_count: 1,
+        };
+
+        let mut req = pin!(req);
+        timeout(Duration::from_millis(500), req.try_next())
+            .await
+            .ok();
+
+        let uris = captured.lock().unwrap();
+        assert_eq!(uris.len(), 1);
+        assert_eq!(uris[0].to_string(), "http://redirect.example.com/");
+    }
+
+    #[tokio::test]
+    async fn updated_dynamic_url_is_used_on_next_send_request() {
+        let (tx, rx) =
+            tokio::sync::watch::channel("http://v1.example.com/".parse::<http::Uri>().unwrap());
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let transport = CapturingTransport {
+            captured_uris: captured.clone(),
+        };
+        let props = props_with_dynamic("http://static.example.com/", rx);
+        let req = ReconnectingRequest::new(Arc::new(transport), props, None);
+
+        let _ = req.send_request(&req.props.resolve_url());
+        tx.send("http://v2.example.com/".parse().unwrap()).unwrap();
+        let _ = req.send_request(&req.props.resolve_url());
+
+        let uris = captured.lock().unwrap();
+        assert_eq!(uris.len(), 2);
+        assert_eq!(uris[0].to_string(), "http://v1.example.com/");
+        assert_eq!(uris[1].to_string(), "http://v2.example.com/");
     }
 
     // When a parse error happens during streaming and reconnect is
