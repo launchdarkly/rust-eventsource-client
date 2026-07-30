@@ -6,6 +6,10 @@ inputs:
     description: "Flags to pass to cargo commands."
     required: false
     default: ""
+  token:
+    description: "GitHub token used to download the SSE contract tests; avoids API rate limiting."
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -37,3 +41,5 @@ runs:
     - name: Run contract tests
       shell: bash
       run: CARGO_FLAGS="${{ inputs.cargo-flags }}" make run-contract-tests
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}

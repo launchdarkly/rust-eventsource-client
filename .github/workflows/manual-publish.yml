@@ -27,6 +27,8 @@ jobs:
           rustup component add rustfmt clippy
 
       - uses: ./.github/actions/ci
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.2.0
         name: "Get crates.io token"
