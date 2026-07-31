@@ -39,7 +39,12 @@ runs:
       run: CARGO_FLAGS="${{ inputs.cargo-flags }}" make start-contract-test-service-bg
 
     - name: Run contract tests
-      shell: bash
-      run: CARGO_FLAGS="${{ inputs.cargo-flags }}" make run-contract-tests
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
+      uses: launchdarkly/gh-actions/actions/contract-tests@contract-tests-v1.3.0
+      with:
+        repo: sse-contract-tests
+        branch: main
+        version: v2
+        token: ${{ inputs.token }}
+        test_service_port: '8080'
+        debug_logging: 'true'
+        enable_persistence_tests: 'false'
