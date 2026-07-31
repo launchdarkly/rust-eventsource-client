@@ -2,6 +2,18 @@
 
 All notable changes to the project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org).
 
+## [0.18.0](https://github.com/launchdarkly/rust-eventsource-client/compare/0.17.5...0.18.0) (2026-07-31)
+
+
+### Features
+
+* Add dynamic URL support to ClientBuilder ([#143](https://github.com/launchdarkly/rust-eventsource-client/issues/143)) ([ee31578](https://github.com/launchdarkly/rust-eventsource-client/commit/ee315789135aabdd37c3f2017d3727134c3614b4))
+
+
+### Bug Fixes
+
+* Bump MSRV from 1.94 to 1.95 ([#141](https://github.com/launchdarkly/rust-eventsource-client/issues/141)) ([ee1cc42](https://github.com/launchdarkly/rust-eventsource-client/commit/ee1cc428909b053f75ee23eeb3af433957b274b5))
+
 ## [0.17.5](https://github.com/launchdarkly/rust-eventsource-client/compare/0.17.4...0.17.5) (2026-06-08)
 
 
