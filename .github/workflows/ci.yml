@@ -46,6 +46,7 @@ jobs:
       - uses: ./.github/actions/ci
         with:
           cargo-flags: ${{ matrix.features.cargo-flags }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   build-docs:
     runs-on: ubuntu-latest
