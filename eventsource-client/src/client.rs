@@ -354,7 +354,7 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
     type Item = Result<SSE>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        trace!("ReconnectingRequest::poll({:?})", &self.state);
+        trace!("ReconnectingRequest::poll({:?})", self.state);
 
         loop {
             let this = self.as_mut().project();
@@ -374,7 +374,7 @@ impl<T: HttpTransport> Stream for ReconnectingRequest<T> {
                 };
             }
 
-            trace!("ReconnectingRequest::poll loop({:?})", &this.state);
+            trace!("ReconnectingRequest::poll loop({:?})", this.state);
 
             let state = this.state.project();
             match state {
