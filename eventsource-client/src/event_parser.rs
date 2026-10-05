@@ -385,7 +385,7 @@ impl EventParser {
                 self.complete_lines.push_back(actually_complete_line);
             }
 
-            if self.last_char_was_cr && line == [b'\n'] {
+            if self.last_char_was_cr && line == *b"\n" {
                 // This is a continuation of a \r\n pair, so we can ignore this line. We do need to
                 // reset our flag though.
                 self.last_char_was_cr = false;
