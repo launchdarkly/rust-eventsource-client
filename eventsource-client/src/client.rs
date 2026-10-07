@@ -1010,6 +1010,48 @@ mod tests {
         assert_eq!(uris[1].to_string(), "http://v2.example.com/");
     }
 
+    #[cfg(feature = "hyper")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unknown_field_block_does_not_interrupt_stream() {
+        use crate::{Client, ClientBuilder, Error, Event, ReconnectOptionsBuilder, SSE};
+        use futures::StreamExt;
+        use launchdarkly_sdk_transport::HyperTransport;
+
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_body("unknown: value\n\ndata: hello\n\n")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let transport = HyperTransport::new().expect("failed to build transport");
+        let client = ClientBuilder::for_url(&server.url())
+            .unwrap()
+            .reconnect(ReconnectOptionsBuilder::new(false).build())
+            .build_with_transport(transport);
+
+        let items =
+            tokio::time::timeout(Duration::from_secs(2), client.stream().collect::<Vec<_>>())
+                .await
+                .expect("timed out waiting for the stream to end");
+
+        assert_eq!(items.len(), 3);
+        assert!(matches!(items.first(), Some(Ok(SSE::Connected(_)))));
+        assert_eq!(
+            items[1].as_ref().unwrap(),
+            &SSE::Event(Event {
+                event_type: "message".into(),
+                data: "hello".into(),
+                id: None,
+                retry: None,
+            })
+        );
+        assert!(matches!(items.last(), Some(Err(Error::Eof))));
+        mock.assert_async().await;
+    }
+
     // When a parse error happens during streaming and reconnect is
     // enabled, the next stream item should be a fresh `Connected` from
     // the reconnect, not another error from continuing to drain the
