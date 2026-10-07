@@ -272,6 +272,10 @@ impl EventParser {
                         continue;
                     }
 
+                    if !matches!(key, "event" | "data" | "id" | "retry") {
+                        continue;
+                    }
+
                     let id = &self.last_event_id;
                     let event_data = self
                         .event_data
@@ -538,6 +542,53 @@ mod tests {
         assert!(parser.get_event().is_none());
     }
 
+    #[test_case("unknown: value"; "unknown_with_value")]
+    #[test_case("unknown"; "unknown_without_colon")]
+    #[test_case("unknown:"; "unknown_without_value")]
+    #[test_case("DATA: value"; "uppercase_data")]
+    #[test_case("EVENT: update"; "uppercase_event")]
+    #[test_case("ID: cursor"; "uppercase_id")]
+    #[test_case("RETRY: 42"; "uppercase_retry")]
+    #[test_case("☃: value"; "unicode_name")]
+    #[test_case(" : value"; "space_name")]
+    fn test_unknown_field_blocks_are_ignored(field: &str) {
+        for line_ending in ["\n", "\r", "\r\n"] {
+            let input =
+                format!("{field}{line_ending}{line_ending}data: hello{line_ending}{line_ending}");
+
+            for split in 0..=input.len() {
+                let mut parser = EventParser::new();
+                let (first, second) = input.as_bytes().split_at(split);
+
+                assert!(parser.process_bytes(Bytes::copy_from_slice(first)).is_ok());
+                assert!(parser.process_bytes(Bytes::copy_from_slice(second)).is_ok());
+                assert_eq!(parser.get_event(), Some(event("message", "hello")));
+                assert!(parser.get_event().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_unknown_fields_preserve_event_data() {
+        let mut parser = EventParser::new();
+        assert!(parser
+            .process_bytes(Bytes::from(
+                "unknown: before\nid: cursor\nevent: update\ndata: hello\n\
+                 unknown\nretry: 42\nDATA: ignored\ndata: world\nunknown: after\n\n"
+            ))
+            .is_ok());
+        assert_eq!(
+            parser.get_event(),
+            Some(SSE::Event(Event {
+                event_type: "update".into(),
+                data: "hello\nworld".into(),
+                id: Some("cursor".into()),
+                retry: Some(42),
+            }))
+        );
+        assert!(parser.get_event().is_none());
+    }
+
     #[test]
     fn test_ignore_id_containing_null() {
         let mut parser = EventParser::new();
@@ -786,17 +837,21 @@ mod tests {
     }
 
     #[test]
-    fn test_event_parser_second_bom_should_fail() {
+    fn test_event_parser_only_strips_initial_bom() {
         let mut parser = EventParser::new();
-        // First event with BOM - should succeed
         assert!(parser
             .process_bytes(Bytes::from(b"\xEF\xBB\xBFdata: first\n\n".as_slice()))
             .is_ok());
         assert_eq!(parser.get_event(), Some(event("message", "first")));
 
-        // Second event with BOM - should fail (only first message can have BOM)
-        let result = parser.process_bytes(Bytes::from(b"\xEF\xBB\xBFdata: second\n\n".as_slice()));
-        assert!(result.is_err());
+        // Only the initial BOM is stripped, so this field name is not "data".
+        assert!(parser
+            .process_bytes(Bytes::from(b"\xEF\xBB\xBFdata: second\n\n".as_slice()))
+            .is_ok());
+        assert!(parser.get_event().is_none());
+        assert!(parser.process_bytes(Bytes::from("data: third\n\n")).is_ok());
+        assert_eq!(parser.get_event(), Some(event("message", "third")));
+        assert!(parser.get_event().is_none());
     }
 
     proptest! {
