@@ -87,7 +87,9 @@ async fn status() -> impl Responder {
             "comments".to_string(),
             "headers".to_string(),
             "last-event-id".to_string(),
+            "post".to_string(),
             "read-timeout".to_string(),
+            "report".to_string(),
         ],
     })
 }
