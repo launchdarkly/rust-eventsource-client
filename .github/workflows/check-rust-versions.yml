@@ -22,6 +22,8 @@ jobs:
           endpoint: https://endoflife.date/api/rust.json
           configuration: '{ "method": "GET" }'
           debug: true
+          # Keep the variable name that the next step reads. v2.5 renamed the default to fetchApiData.
+          variable-name: fetch-api-data
         # Parse the response JSON and insert into environment variables for the next step.
         # We use the antepenultimate (third most recent) version as our target.
       - name: Parse officially supported Rust versions
