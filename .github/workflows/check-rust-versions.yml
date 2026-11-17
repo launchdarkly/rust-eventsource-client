@@ -13,11 +13,11 @@ jobs:
       target: ${{ steps.parse.outputs.target }}
     timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # Perform a GET request to endoflife.date for the Rust language. The response
         # contains all Rust releases; we're interested in the 2nd index (antepenultimate).
       - name: Fetch officially supported Rust versions
-        uses: JamesIves/fetch-api-data-action@396ebea7d13904824f85b892b1616985f847301c
+        uses: JamesIves/fetch-api-data-action@1df37d52090c0a251f252c7ba247d2aba1d408ae # v2.5.2
         with:
           endpoint: https://endoflife.date/api/rust.json
           configuration: '{ "method": "GET" }'
@@ -27,7 +27,7 @@ jobs:
       - name: Parse officially supported Rust versions
         id: parse
         run: |
-          echo "target=${{ fromJSON(env.fetch-api-data)[2].cycle }}" >> $GITHUB_OUTPUT
+          echo "target=${{ fromJSON(env.fetchApiData)[2].cycle }}" >> $GITHUB_OUTPUT
 
   create-prs:
     permissions:
@@ -38,7 +38,7 @@ jobs:
     env:
       officialTargetVersion: ${{ needs.check-rust-eol.outputs.target }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Get current Rust version
         id: rust-versions
