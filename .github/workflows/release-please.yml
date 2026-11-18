@@ -29,8 +29,10 @@ jobs:
 
       - name: Setup rust tooling
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
+        env:
+          RUST_TARGET: ${{ steps.rust-version.outputs.target }}
         run: |
-          rustup override set ${{ steps.rust-version.outputs.target }}
+          rustup override set "$RUST_TARGET"
           rustup component add rustfmt clippy
 
       - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.2.1
