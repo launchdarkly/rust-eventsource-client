@@ -39,8 +39,10 @@ jobs:
         run: cat ./.github/variables/rust-versions.env >> $GITHUB_OUTPUT
 
       - name: Setup rust tooling
+        env:
+          RUST_TARGET: ${{ steps.rust-version.outputs.target }}
         run: |
-          rustup override set ${{ steps.rust-version.outputs.target }}
+          rustup override set "$RUST_TARGET"
           rustup component add rustfmt clippy
 
       - uses: ./.github/actions/ci
