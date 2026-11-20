@@ -35,7 +35,7 @@ jobs:
           rustup override set "$RUST_TARGET"
           rustup component add rustfmt clippy
 
-      - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.2.1
+      - uses: launchdarkly/gh-actions/actions/release-secrets@release-secrets-v1.2.2
         name: "Get crates.io token"
         if: ${{ steps.release.outputs['eventsource-client--release_created'] == 'true' }}
         with:
