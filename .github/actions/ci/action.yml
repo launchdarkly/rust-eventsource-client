@@ -39,7 +39,7 @@ runs:
       run: CARGO_FLAGS="${{ inputs.cargo-flags }}" make start-contract-test-service-bg
 
     - name: Run contract tests
-      uses: launchdarkly/gh-actions/actions/contract-tests@contract-tests-v1.3.0
+      uses: launchdarkly/gh-actions/actions/contract-tests@contract-tests/v1.3.0
       with:
         repo: sse-contract-tests
         branch: main
